@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compileRuleDefinitions } from '../src/scanner/rules';
+import { compileRuleDefinitions, validateCustomRegexExpression } from '../src/scanner/rules';
 import { scanResponseBody } from '../src/scanner/scan';
 import type { Finding, RuleDefinition } from '../src/scanner/types';
 import { exportFindingGroupsCsv } from '../src/sidepanel/v2/exportCsv';
@@ -33,7 +33,47 @@ describe('v2 capabilities', () => {
     }));
   });
 
-  it('groups findings by method and sanitized interface path', () => {
+  it('rejects custom regex patterns with common catastrophic backtracking shapes', () => {
+    expect(() => validateCustomRegexExpression('(a+)+$')).toThrow(/高风险/);
+    expect(() => validateCustomRegexExpression('(a|aa)+$')).toThrow(/高风险/);
+    expect(() => validateCustomRegexExpression('(a+)\\1')).toThrow(/反向引用/);
+  });
+
+  it('caps the number of matches returned by one custom rule', () => {
+    const definition: RuleDefinition = {
+      id: 'CUSTOM_ANY_CHAR',
+      name: '单字符',
+      description: '',
+      type: 'regex',
+      expression: '.',
+      enabled: true,
+      system: false,
+      createdAt: 1,
+      updatedAt: 1
+    };
+    const [rule] = compileRuleDefinitions([definition]);
+    const input = Array.from({ length: 300 }, (_, index) => String.fromCodePoint(0x4e00 + index)).join('');
+
+    expect(rule.detect(input, { path: '$' })).toHaveLength(200);
+  });
+
+  it('does not execute unsafe persisted custom regex rules', () => {
+    const definition: RuleDefinition = {
+      id: 'CUSTOM_UNSAFE',
+      name: '危险规则',
+      description: '',
+      type: 'regex',
+      expression: '(a+)+$',
+      enabled: true,
+      system: false,
+      createdAt: 1,
+      updatedAt: 1
+    };
+
+    expect(compileRuleDefinitions([definition])).toEqual([]);
+  });
+
+  it('groups findings by method, origin, and sanitized interface path', () => {
     const base: Omit<Finding, 'id' | 'ruleId' | 'ruleName' | 'path' | 'rawValue'> = {
       tabId: 1,
       requestId: 'r1',
@@ -50,21 +90,38 @@ describe('v2 capabilities', () => {
 
     const groups = groupFindings(findings);
     expect(groups).toHaveLength(1);
-    expect(groups[0]).toMatchObject({ method: 'GET', url: '/api/user/detail', count: 2 });
+    expect(groups[0]).toMatchObject({ method: 'GET', url: 'https://example.com/api/user/detail', count: 2 });
     expect(groups[0].rules).toEqual(['手机号', '身份证号']);
+  });
+
+  it('does not merge identical paths from different origins', () => {
+    const base: Omit<Finding, 'id' | 'ruleId' | 'ruleName' | 'path' | 'rawValue' | 'url'> = {
+      tabId: 1,
+      requestId: 'r1',
+      method: 'GET',
+      status: 200,
+      mimeType: 'application/json',
+      detectedAt: 1
+    };
+    const findings: Finding[] = [
+      { ...base, id: '1', url: 'https://api-a.example.com/user/detail', ruleId: 'A', ruleName: 'A', path: '$.a', rawValue: 'a' },
+      { ...base, id: '2', url: 'https://api-b.example.com/user/detail', ruleId: 'B', ruleName: 'B', path: '$.b', rawValue: 'b' }
+    ];
+
+    expect(groupFindings(findings)).toHaveLength(2);
   });
 
   it('exports only interface and location without raw sensitive values', () => {
     const csv = exportFindingGroupsCsv([{
-      key: 'GET:/api/user/detail',
+      key: 'GET:https://example.com/api/user/detail',
       method: 'GET',
-      url: '/api/user/detail',
+      url: 'https://example.com/api/user/detail',
       rules: ['手机号'],
       locations: ['$.phone'],
       count: 1
     }]);
 
-    expect(csv).toContain('GET /api/user/detail');
+    expect(csv).toContain('GET https://example.com/api/user/detail');
     expect(csv).toContain('$.phone');
     expect(csv).not.toContain('13800138000');
   });

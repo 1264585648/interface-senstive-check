@@ -1,9 +1,10 @@
 import { isTextLikeMime } from './scanner/content';
-import { compileRuleDefinitions, defaultRuleDefinitions } from './scanner/rules';
-import { scanResponseBody } from './scanner/scan';
+import { compileRuleDefinitions, defaultRuleDefinitions, validateCustomRegexExpression } from './scanner/rules';
+import { scanResponseBodyDetailed } from './scanner/scan';
 import type { Finding, RuleDefinition, RuleId, RuleInput, RuleSettings, ScanState } from './scanner/types';
 import type { ExtensionEvent, ExtensionMessage, ExtensionResponse } from './shared/messages';
 import { FINDINGS_ADDED, RULES_UPDATED, SCAN_STATE_UPDATED } from './shared/messages';
+import { sanitizeUrl } from './shared/url';
 
 type ResponseMeta = {
   requestId: string;
@@ -33,7 +34,7 @@ const methodKey = (tabId: number, requestId: string) => `${METHOD_KEY_PREFIX}${t
 const responseKey = (tabId: number, requestId: string) => `${RESPONSE_KEY_PREFIX}${tabId}:${requestId}`;
 
 function defaultState(tabId: number): ScanState {
-  return { tabId, attached: false, scannedResponses: 0 };
+  return { tabId, attached: false, scannedResponses: 0, incompleteResponses: 0 };
 }
 
 function emit(event: ExtensionEvent): void {
@@ -46,7 +47,7 @@ async function loadState(tabId: number): Promise<ScanState> {
 
   const key = stateKey(tabId);
   const stored = await chrome.storage.session.get(key);
-  const state = (stored[key] as ScanState | undefined) ?? defaultState(tabId);
+  const state = { ...defaultState(tabId), ...((stored[key] as Partial<ScanState> | undefined) ?? {}) };
   states.set(tabId, state);
   return state;
 }
@@ -55,6 +56,16 @@ async function saveState(state: ScanState): Promise<void> {
   states.set(state.tabId, state);
   await chrome.storage.session.set({ [stateKey(state.tabId)]: state });
   emit({ type: SCAN_STATE_UPDATED, state });
+}
+
+async function markIncompleteResponse(tabId: number, warning: string): Promise<void> {
+  const state = await loadState(tabId);
+  if (!state.attached) return;
+  await saveState({
+    ...state,
+    incompleteResponses: state.incompleteResponses + 1,
+    warning
+  });
 }
 
 function normalizeInput(rule: RuleInput): RuleInput {
@@ -70,15 +81,28 @@ function validateRuleInput(rule: RuleInput, system = false): RuleInput {
   const normalized = normalizeInput(rule);
   if (!normalized.name) throw new Error('规则名称不能为空');
   if (normalized.name.length > 60) throw new Error('规则名称不能超过 60 个字符');
-  if (!system) {
-    if (!normalized.expression) throw new Error('正则表达式不能为空');
-    try {
-      new RegExp(normalized.expression, 'g');
-    } catch (error) {
-      throw new Error(`正则表达式无效：${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
+  if (!system) validateCustomRegexExpression(normalized.expression);
   return normalized;
+}
+
+function reconcileRules(persisted: RuleDefinition[]): RuleDefinition[] {
+  const defaults = defaultRuleDefinitions();
+  const persistedById = new Map(persisted.map((rule) => [rule.id, rule]));
+  const builtinIds = new Set(defaults.map((rule) => rule.id));
+  const builtins = defaults.map((fallback) => {
+    const existing = persistedById.get(fallback.id);
+    if (!existing) return fallback;
+    return {
+      ...fallback,
+      name: existing.name,
+      description: existing.description,
+      enabled: existing.enabled,
+      createdAt: existing.createdAt,
+      updatedAt: existing.updatedAt
+    };
+  });
+  const customRules = persisted.filter((rule) => !builtinIds.has(rule.id) && !rule.system && rule.type === 'regex');
+  return [...builtins, ...customRules];
 }
 
 async function loadRules(): Promise<RuleDefinition[]> {
@@ -87,7 +111,12 @@ async function loadRules(): Promise<RuleDefinition[]> {
   const stored = await chrome.storage.local.get([RULES_KEY, RULE_SETTINGS_KEY]);
   const persisted = stored[RULES_KEY];
   if (Array.isArray(persisted)) {
-    rulesCache = (persisted as RuleDefinition[]).map((rule) => ({ ...rule }));
+    const current = persisted as RuleDefinition[];
+    const reconciled = reconcileRules(current);
+    rulesCache = reconciled.map((rule) => ({ ...rule }));
+    if (JSON.stringify(reconciled) !== JSON.stringify(current)) {
+      await chrome.storage.local.set({ [RULES_KEY]: reconciled });
+    }
     return rulesCache.map((rule) => ({ ...rule }));
   }
 
@@ -156,7 +185,9 @@ async function updateRule(ruleId: RuleId, input: RuleInput): Promise<RuleDefinit
 
 async function deleteRule(ruleId: RuleId): Promise<RuleDefinition[]> {
   return mutateRules((rules) => {
-    if (!rules.some((rule) => rule.id === ruleId)) throw new Error('规则不存在');
+    const existing = rules.find((rule) => rule.id === ruleId);
+    if (!existing) throw new Error('规则不存在');
+    if (existing.system) throw new Error('内置规则不能删除，只能停用');
     return rules.filter((rule) => rule.id !== ruleId);
   });
 }
@@ -186,29 +217,6 @@ function decodeBase64Utf8(input: string): string {
   const binary = atob(input);
   const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
   return new TextDecoder().decode(bytes);
-}
-
-function sanitizeUrl(rawUrl: string): string {
-  try {
-    const url = new URL(rawUrl);
-    const safePath = url.pathname
-      .split('/')
-      .map((segment) => {
-        const decoded = (() => {
-          try {
-            return decodeURIComponent(segment);
-          } catch {
-            return segment;
-          }
-        })();
-        const digitCount = (decoded.match(/\d/g) ?? []).length;
-        return digitCount >= 8 || decoded.length > 32 ? ':redacted' : decoded;
-      })
-      .join('/');
-    return `${url.origin}${safePath}`;
-  } catch {
-    return rawUrl.split(/[?#]/, 1)[0];
-  }
 }
 
 async function findPageTarget(tabId: number): Promise<chrome.debugger.TargetInfo | undefined> {
@@ -293,7 +301,8 @@ async function startScan(tabId: number): Promise<ScanState> {
     tabId,
     attached: true,
     pageUrl: sanitizeUrl(target.url),
-    scannedResponses: 0
+    scannedResponses: 0,
+    incompleteResponses: 0
   };
   await saveState(next);
   return next;
@@ -325,7 +334,10 @@ async function processFinishedRequest(tabId: number, requestId: string, encodedD
 
   try {
     if (!isTextLikeMime(meta.mimeType)) return;
-    if (typeof encodedDataLength === 'number' && encodedDataLength > MAX_RESPONSE_BYTES) return;
+    if (typeof encodedDataLength === 'number' && encodedDataLength > MAX_RESPONSE_BYTES) {
+      await markIncompleteResponse(tabId, '有响应超过 10 MB，已跳过完整扫描；0 命中不代表该响应安全。');
+      return;
+    }
 
     const result = await sendCommand<{ body: string; base64Encoded: boolean }>(
       tabId,
@@ -333,16 +345,19 @@ async function processFinishedRequest(tabId: number, requestId: string, encodedD
       { requestId }
     );
     const body = result.base64Encoded ? decodeBase64Utf8(result.body) : result.body;
-    if (new TextEncoder().encode(body).byteLength > MAX_RESPONSE_BYTES) return;
+    if (new TextEncoder().encode(body).byteLength > MAX_RESPONSE_BYTES) {
+      await markIncompleteResponse(tabId, '有响应超过 10 MB，已跳过完整扫描；0 命中不代表该响应安全。');
+      return;
+    }
 
     const runtimeRules = compileRuleDefinitions(await loadRules());
     const enabledRuleIds = new Set<RuleId>(runtimeRules.map((rule) => rule.id));
-    const detections = scanResponseBody(body, enabledRuleIds, runtimeRules);
+    const scanResult = scanResponseBodyDetailed(body, enabledRuleIds, runtimeRules);
     const state = await loadState(tabId);
     if (!state.attached) return;
 
     const now = Date.now();
-    const findings: Finding[] = detections.map((detection, index) => ({
+    const findings: Finding[] = scanResult.detections.map((detection, index) => ({
       ...detection,
       id: `${requestId}:${detection.ruleId}:${detection.path}:${index}`,
       tabId,
@@ -355,10 +370,20 @@ async function processFinishedRequest(tabId: number, requestId: string, encodedD
     }));
 
     if (findings.length > 0) emit({ type: FINDINGS_ADDED, tabId, findings });
-    await saveState({ ...state, scannedResponses: state.scannedResponses + 1, error: undefined });
+    await saveState({
+      ...state,
+      scannedResponses: state.scannedResponses + 1,
+      incompleteResponses: state.incompleteResponses + (scanResult.truncated ? 1 : 0),
+      warning: scanResult.truncated
+        ? '有 JSON 响应因深度或节点数预算未完整扫描；0 命中不代表该响应安全。'
+        : state.warning,
+      error: undefined
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (!message.includes('No resource with given identifier found')) {
+    if (message.includes('No resource with given identifier found')) {
+      await markIncompleteResponse(tabId, '部分响应无法读取，检测结果可能不完整。');
+    } else {
       const state = await loadState(tabId);
       await saveState({ ...state, error: `读取响应失败：${message}` });
     }
