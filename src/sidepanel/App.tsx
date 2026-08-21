@@ -116,7 +116,7 @@ export function App() {
       if (!disposed) setError(cause instanceof Error ? cause.message : String(cause));
     });
 
-    const onActivated = (activeInfo: chrome.tabs.TabActiveInfo) => {
+    const onActivated = (activeInfo: { tabId: number }) => {
       void loadTab(activeInfo.tabId);
     };
     chrome.tabs.onActivated.addListener(onActivated);
