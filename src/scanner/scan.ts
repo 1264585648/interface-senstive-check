@@ -1,8 +1,13 @@
 import { complianceRules } from './rules';
-import type { ComplianceRule, Detection, RuleId } from './types';
+import type { ComplianceRule, Detection, ResponseScanResult, RuleId, ScanLimitReason } from './types';
 
 const MAX_DEPTH = 30;
 const MAX_NODES = 50_000;
+
+type ScanBudget = {
+  count: number;
+  reasons: Set<ScanLimitReason>;
+};
 
 function scanString(
   value: string,
@@ -34,9 +39,16 @@ function visit(
   enabledRuleIds: ReadonlySet<RuleId>,
   rules: ComplianceRule[],
   depth: number,
-  budget: { count: number }
+  budget: ScanBudget
 ): void {
-  if (depth > MAX_DEPTH || budget.count >= MAX_NODES) return;
+  if (depth > MAX_DEPTH) {
+    budget.reasons.add('max-depth');
+    return;
+  }
+  if (budget.count >= MAX_NODES) {
+    budget.reasons.add('max-nodes');
+    return;
+  }
   budget.count += 1;
 
   if (typeof node === 'string') {
@@ -51,7 +63,10 @@ function visit(
 
   if (Array.isArray(node)) {
     for (let index = 0; index < node.length; index += 1) {
-      if (budget.count >= MAX_NODES) break;
+      if (budget.count >= MAX_NODES) {
+        budget.reasons.add('max-nodes');
+        break;
+      }
       visit(node[index], `${path}[${index}]`, detections, enabledRuleIds, rules, depth + 1, budget);
     }
     return;
@@ -59,7 +74,10 @@ function visit(
 
   if (node && typeof node === 'object') {
     for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
-      if (budget.count >= MAX_NODES) break;
+      if (budget.count >= MAX_NODES) {
+        budget.reasons.add('max-nodes');
+        break;
+      }
       const childPath = /^[A-Za-z_$][\w$]*$/.test(key) ? `${path}.${key}` : `${path}[${JSON.stringify(key)}]`;
       visit(value, childPath, detections, enabledRuleIds, rules, depth + 1, budget);
     }
@@ -91,21 +109,36 @@ function appendRawFallback(
   }
 }
 
-export function scanResponseBody(
+export function scanResponseBodyDetailed(
   body: string,
   enabledRuleIds: ReadonlySet<RuleId> = new Set(complianceRules.map((rule) => rule.id)),
   rules: ComplianceRule[] = complianceRules
-): Detection[] {
-  if (!body.trim()) return [];
+): ResponseScanResult {
+  if (!body.trim()) return { detections: [], truncated: false, reasons: [] };
 
   const detections: Detection[] = [];
+  const budget: ScanBudget = { count: 0, reasons: new Set<ScanLimitReason>() };
+
   try {
     const parsed = JSON.parse(body) as unknown;
-    visit(parsed, '$', detections, enabledRuleIds, rules, 0, { count: 0 });
+    visit(parsed, '$', detections, enabledRuleIds, rules, 0, budget);
     appendRawFallback(body, detections, enabledRuleIds, rules);
   } catch {
     scanString(body, '$', detections, enabledRuleIds, rules);
   }
 
-  return dedupe(detections);
+  const reasons = [...budget.reasons];
+  return {
+    detections: dedupe(detections),
+    truncated: reasons.length > 0,
+    reasons
+  };
+}
+
+export function scanResponseBody(
+  body: string,
+  enabledRuleIds: ReadonlySet<RuleId> = new Set(complianceRules.map((rule) => rule.id)),
+  rules: ComplianceRule[] = complianceRules
+): Detection[] {
+  return scanResponseBodyDetailed(body, enabledRuleIds, rules).detections;
 }
