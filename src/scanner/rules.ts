@@ -5,6 +5,8 @@ const MOBILE_REGEX = /(?<!\d)(?:\+?86[-\s]?)?1[3-9]\d(?:[-\s]?\d){8}(?!\d)/g;
 const ID_CARD_18_REGEX = /(?<![0-9A-Za-z])\d{17}[0-9Xx](?![0-9A-Za-z])/g;
 const ID_CARD_15_REGEX = /(?<!\d)\d{15}(?!\d)/g;
 const BIRTH_PATH_REGEX = /(birthday|birth[_-]?(?:day|date|month|ym)|date[_-]?of[_-]?birth|dob|出生日期|出生年月|生日)/i;
+const MAX_CUSTOM_REGEX_LENGTH = 256;
+const MAX_CUSTOM_RULE_MATCHES = 200;
 
 function unique(matches: string[]): string[] {
   return [...new Set(matches)];
@@ -94,7 +96,90 @@ export function defaultRuleDefinitions(now = Date.now()): RuleDefinition[] {
   }));
 }
 
+function nextTokenIsQuantifier(expression: string, index: number): boolean {
+  const next = expression[index];
+  return next === '*' || next === '+' || next === '?' || next === '{';
+}
+
+export function validateCustomRegexExpression(expression: string): void {
+  if (!expression) throw new Error('正则表达式不能为空');
+  if (expression.length > MAX_CUSTOM_REGEX_LENGTH) {
+    throw new Error(`正则表达式不能超过 ${MAX_CUSTOM_REGEX_LENGTH} 个字符`);
+  }
+
+  try {
+    new RegExp(expression, 'g');
+  } catch (error) {
+    throw new Error(`正则表达式无效：${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  const groups: Array<{ hasQuantifier: boolean; hasAlternation: boolean }> = [];
+  let inClass = false;
+
+  for (let index = 0; index < expression.length; index += 1) {
+    const char = expression[index];
+
+    if (char === '\\') {
+      const escaped = expression[index + 1];
+      if (escaped && /[1-9]/.test(escaped)) {
+        throw new Error('自定义规则不支持反向引用，请改用无回溯的表达式');
+      }
+      if (escaped === 'k' && expression[index + 2] === '<') {
+        throw new Error('自定义规则不支持命名反向引用，请改用无回溯的表达式');
+      }
+      index += 1;
+      continue;
+    }
+
+    if (char === '[') {
+      inClass = true;
+      continue;
+    }
+    if (char === ']' && inClass) {
+      inClass = false;
+      continue;
+    }
+    if (inClass) continue;
+
+    if (char === '(') {
+      groups.push({ hasQuantifier: false, hasAlternation: false });
+      continue;
+    }
+
+    if (char === '|') {
+      const current = groups.at(-1);
+      if (current) current.hasAlternation = true;
+      continue;
+    }
+
+    if (char === '*' || char === '+' || char === '{') {
+      const current = groups.at(-1);
+      if (current) current.hasQuantifier = true;
+      continue;
+    }
+
+    if (char === '?' && expression[index - 1] !== '(') {
+      const current = groups.at(-1);
+      if (current) current.hasQuantifier = true;
+      continue;
+    }
+
+    if (char === ')') {
+      const current = groups.pop();
+      if (!current) continue;
+      if (nextTokenIsQuantifier(expression, index + 1) && (current.hasQuantifier || current.hasAlternation)) {
+        throw new Error('正则表达式包含高风险嵌套量词或重复分支，请简化后重试');
+      }
+      if (nextTokenIsQuantifier(expression, index + 1)) {
+        const parent = groups.at(-1);
+        if (parent) parent.hasQuantifier = true;
+      }
+    }
+  }
+}
+
 function compileRegexRule(definition: RuleDefinition): ComplianceRule {
+  const regex = new RegExp(definition.expression, 'g');
   return {
     id: definition.id,
     name: definition.name,
@@ -102,12 +187,16 @@ function compileRegexRule(definition: RuleDefinition): ComplianceRule {
     expression: definition.expression,
     scanRaw: true,
     detect: (value) => {
-      try {
-        const regex = new RegExp(definition.expression, 'g');
-        return unique(Array.from(value.matchAll(regex), (match) => match[0]).filter(Boolean));
-      } catch {
-        return [];
+      regex.lastIndex = 0;
+      const matches: string[] = [];
+      let match: RegExpExecArray | null;
+
+      while (matches.length < MAX_CUSTOM_RULE_MATCHES && (match = regex.exec(value)) !== null) {
+        if (match[0]) matches.push(match[0]);
+        if (match[0] === '') regex.lastIndex += 1;
       }
+
+      return unique(matches);
     }
   };
 }
@@ -131,7 +220,13 @@ export function compileRuleDefinitions(definitions: RuleDefinition[]): Complianc
       continue;
     }
 
-    compiled.push(compileRegexRule(definition));
+    try {
+      validateCustomRegexExpression(definition.expression);
+      compiled.push(compileRegexRule(definition));
+    } catch {
+      // Older persisted rules may predate the safety checks. Keep them visible in settings,
+      // but never execute an unsafe expression in the service worker.
+    }
   }
 
   return compiled;
