@@ -8,7 +8,7 @@
 
 - 中国大陆手机号（完整 11 位）
 - 中国居民身份证号（18 位校验码验证，并兼容历史 15 位号码）
-- 完整出生年月日（仅在 birthday / birthDate / DOB / 出生日期等字段中检测，支持 `YYYY-MM-DD`、`YYYY/MM/DD`、`YYYY.MM.DD`、`YYYY年MM月DD日`、`YYYYMMDD`，避免把订单日期等普通日期误报为生日）
+- 出生年月 / 完整出生日期（仅在 birthday / birthDate / birth_day / DOB / 出生日期等字段中检测；支持年月和年月日常见格式，避免把订单日期等普通日期误报为生日）
 
 命中即记为 `FAIL`，不判断“是否本人数据”等业务上下文。扫描结果只保留脱敏后的证据。
 
@@ -19,7 +19,7 @@
 3. 使用 Chrome DevTools Protocol `Network` 域监听 `Fetch` / `XHR`。
 4. `Network.loadingFinished` 后读取 `Network.getResponseBody`。
 5. JSON 响应递归扫描并输出 JSONPath；非 JSON 文本进行全文扫描。
-6. 结果保存在 `chrome.storage.session`，不上传服务器。
+6. 结果保存在 `chrome.storage.session`，不上传服务器；证据只保存脱敏值，请求 URL 丢弃 query/fragment，并对疑似动态敏感 path 段做 redaction。
 
 ## 本地开发
 
@@ -52,4 +52,4 @@ npm run build
 - 银行卡、邮箱、Token 等更多规则
 - HTML / JSON 合规报告导出
 - 请求级聚合与去重
-- 大响应体大小限制与扫描性能指标
+- 大响应体扫描性能指标
