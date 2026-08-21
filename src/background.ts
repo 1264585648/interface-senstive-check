@@ -72,8 +72,14 @@ async function setRuleEnabled(ruleId: RuleId, enabled: boolean): Promise<RuleSet
   return settings;
 }
 
-function sendCommand<T = unknown>(tabId: number, method: string, commandParams?: object): Promise<T> {
-  return chrome.debugger.sendCommand(debuggee(tabId), method, commandParams) as Promise<T>;
+function sendCommand<T = unknown>(
+  tabId: number,
+  method: string,
+  commandParams?: Record<string, unknown>
+): Promise<T> {
+  return chrome.debugger
+    .sendCommand(debuggee(tabId), method, commandParams)
+    .then((result) => result as T);
 }
 
 function decodeBase64Utf8(input: string): string {
