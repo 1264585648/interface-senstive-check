@@ -335,6 +335,11 @@ export function App() {
             <p>命中结果可在当前会话展示明文用于确认；导出文件只包含接口和位置，不包含敏感明文。</p>
           </div>
 
+          {state?.warning && (
+            <div className="error-message">
+              ⚠ {state.warning}（未完整扫描 {state.incompleteResponses} 个响应）
+            </div>
+          )}
           {(error || state?.error) && <div className="error-message">{error || state?.error}</div>}
         </aside>
 
@@ -413,7 +418,7 @@ export function App() {
             {findings.length === 0 && (
               <div className="empty-state">
                 <div className="empty-icon">✓</div>
-                <strong>暂无敏感信息</strong>
+                <strong>{(state?.incompleteResponses ?? 0) > 0 ? '未发现命中，但扫描不完整' : '暂无敏感信息'}</strong>
                 <span>{state?.attached ? '正在采集当前页面的 Fetch / XHR 响应' : '点击开始采集后，正常操作目标网页即可'}</span>
               </div>
             )}
