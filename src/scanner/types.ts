@@ -41,6 +41,14 @@ export interface RuleInput {
   enabled: boolean;
 }
 
+export type ScanLimitReason = 'max-depth' | 'max-nodes';
+
+export interface ResponseScanResult {
+  detections: Detection[];
+  truncated: boolean;
+  reasons: ScanLimitReason[];
+}
+
 export interface Finding extends Detection {
   id: string;
   tabId: number;
@@ -57,6 +65,8 @@ export interface ScanState {
   attached: boolean;
   pageUrl?: string;
   scannedResponses: number;
+  incompleteResponses: number;
+  warning?: string;
   error?: string;
 }
 
