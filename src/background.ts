@@ -1,9 +1,9 @@
 import { isTextLikeMime } from './scanner/content';
+import { compileRuleDefinitions, defaultRuleDefinitions } from './scanner/rules';
 import { scanResponseBody } from './scanner/scan';
-import { complianceRules } from './scanner/rules';
-import type { Finding, RuleId, RuleSettings, ScanState } from './scanner/types';
+import type { Finding, RuleDefinition, RuleId, RuleInput, RuleSettings, ScanState } from './scanner/types';
 import type { ExtensionEvent, ExtensionMessage, ExtensionResponse } from './shared/messages';
-import { FINDINGS_ADDED, SCAN_STATE_UPDATED } from './shared/messages';
+import { FINDINGS_ADDED, RULES_UPDATED, SCAN_STATE_UPDATED } from './shared/messages';
 
 type ResponseMeta = {
   requestId: string;
@@ -18,12 +18,14 @@ const STATE_KEY_PREFIX = 'scan-state:';
 const METHOD_KEY_PREFIX = 'pending-method:';
 const RESPONSE_KEY_PREFIX = 'pending-response:';
 const RULE_SETTINGS_KEY = 'rule-settings';
+const RULES_KEY = 'rules-v2';
 
 const states = new Map<number, ScanState>();
 const responseMemory = new Map<number, Map<string, ResponseMeta>>();
 const methodMemory = new Map<number, Map<string, string>>();
 const intentionalDetach = new Set<number>();
-let ruleSettingsMutation: Promise<void> = Promise.resolve();
+let rulesCache: RuleDefinition[] | undefined;
+let rulesMutation: Promise<void> = Promise.resolve();
 
 const debuggee = (tabId: number): chrome.debugger.Debuggee => ({ tabId });
 const stateKey = (tabId: number) => `${STATE_KEY_PREFIX}${tabId}`;
@@ -32,10 +34,6 @@ const responseKey = (tabId: number, requestId: string) => `${RESPONSE_KEY_PREFIX
 
 function defaultState(tabId: number): ScanState {
   return { tabId, attached: false, scannedResponses: 0 };
-}
-
-function defaultRuleSettings(): RuleSettings {
-  return Object.fromEntries(complianceRules.map((rule) => [rule.id, true])) as RuleSettings;
 }
 
 function emit(event: ExtensionEvent): void {
@@ -59,23 +57,119 @@ async function saveState(state: ScanState): Promise<void> {
   emit({ type: SCAN_STATE_UPDATED, state });
 }
 
-async function loadRuleSettings(): Promise<RuleSettings> {
-  const stored = await chrome.storage.local.get(RULE_SETTINGS_KEY);
+function normalizeInput(rule: RuleInput): RuleInput {
   return {
-    ...defaultRuleSettings(),
-    ...((stored[RULE_SETTINGS_KEY] as Partial<RuleSettings> | undefined) ?? {})
+    name: rule.name.trim(),
+    description: rule.description.trim(),
+    expression: rule.expression.trim(),
+    enabled: Boolean(rule.enabled)
   };
 }
 
-async function setRuleEnabled(ruleId: RuleId, enabled: boolean): Promise<RuleSettings> {
-  const operation = ruleSettingsMutation.then(async () => {
-    const settings = await loadRuleSettings();
-    settings[ruleId] = enabled;
-    await chrome.storage.local.set({ [RULE_SETTINGS_KEY]: settings });
-    return settings;
+function validateRuleInput(rule: RuleInput, system = false): RuleInput {
+  const normalized = normalizeInput(rule);
+  if (!normalized.name) throw new Error('规则名称不能为空');
+  if (normalized.name.length > 60) throw new Error('规则名称不能超过 60 个字符');
+  if (!system) {
+    if (!normalized.expression) throw new Error('正则表达式不能为空');
+    try {
+      new RegExp(normalized.expression, 'g');
+    } catch (error) {
+      throw new Error(`正则表达式无效：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return normalized;
+}
+
+async function loadRules(): Promise<RuleDefinition[]> {
+  if (rulesCache) return rulesCache.map((rule) => ({ ...rule }));
+
+  const stored = await chrome.storage.local.get([RULES_KEY, RULE_SETTINGS_KEY]);
+  const persisted = stored[RULES_KEY];
+  if (Array.isArray(persisted)) {
+    rulesCache = (persisted as RuleDefinition[]).map((rule) => ({ ...rule }));
+    return rulesCache.map((rule) => ({ ...rule }));
+  }
+
+  const legacySettings = (stored[RULE_SETTINGS_KEY] as Partial<RuleSettings> | undefined) ?? {};
+  const defaults = defaultRuleDefinitions().map((rule) => ({
+    ...rule,
+    enabled: legacySettings[rule.id] ?? rule.enabled
+  }));
+  rulesCache = defaults;
+  await chrome.storage.local.set({ [RULES_KEY]: defaults });
+  return defaults.map((rule) => ({ ...rule }));
+}
+
+async function saveRules(rules: RuleDefinition[]): Promise<RuleDefinition[]> {
+  rulesCache = rules.map((rule) => ({ ...rule }));
+  await chrome.storage.local.set({ [RULES_KEY]: rulesCache });
+  emit({ type: RULES_UPDATED, rules: rulesCache });
+  return rulesCache.map((rule) => ({ ...rule }));
+}
+
+async function mutateRules(mutator: (rules: RuleDefinition[]) => RuleDefinition[]): Promise<RuleDefinition[]> {
+  let result: RuleDefinition[] = [];
+  const operation = rulesMutation.then(async () => {
+    const current = await loadRules();
+    result = await saveRules(mutator(current));
   });
-  ruleSettingsMutation = operation.then(() => undefined, () => undefined);
-  return operation;
+  rulesMutation = operation.then(() => undefined, () => undefined);
+  await operation;
+  return result;
+}
+
+async function createRule(input: RuleInput): Promise<RuleDefinition[]> {
+  const rule = validateRuleInput(input);
+  const now = Date.now();
+  return mutateRules((rules) => [
+    ...rules,
+    {
+      id: `CUSTOM_${crypto.randomUUID()}`,
+      name: rule.name,
+      description: rule.description,
+      type: 'regex',
+      expression: rule.expression,
+      enabled: rule.enabled,
+      system: false,
+      createdAt: now,
+      updatedAt: now
+    }
+  ]);
+}
+
+async function updateRule(ruleId: RuleId, input: RuleInput): Promise<RuleDefinition[]> {
+  return mutateRules((rules) => {
+    const existing = rules.find((rule) => rule.id === ruleId);
+    if (!existing) throw new Error('规则不存在');
+    const nextInput = validateRuleInput(input, existing.system);
+    return rules.map((rule) => rule.id !== ruleId ? rule : {
+      ...rule,
+      name: nextInput.name,
+      description: nextInput.description,
+      expression: existing.system ? rule.expression : nextInput.expression,
+      enabled: nextInput.enabled,
+      updatedAt: Date.now()
+    });
+  });
+}
+
+async function deleteRule(ruleId: RuleId): Promise<RuleDefinition[]> {
+  return mutateRules((rules) => {
+    if (!rules.some((rule) => rule.id === ruleId)) throw new Error('规则不存在');
+    return rules.filter((rule) => rule.id !== ruleId);
+  });
+}
+
+async function setRuleEnabled(ruleId: RuleId, enabled: boolean): Promise<RuleDefinition[]> {
+  return mutateRules((rules) => {
+    if (!rules.some((rule) => rule.id === ruleId)) throw new Error('规则不存在');
+    return rules.map((rule) => rule.id === ruleId ? { ...rule, enabled, updatedAt: Date.now() } : rule);
+  });
+}
+
+async function loadRuleSettings(): Promise<RuleSettings> {
+  return Object.fromEntries((await loadRules()).map((rule) => [rule.id, rule.enabled]));
 }
 
 function sendCommand<T = unknown>(
@@ -192,8 +286,6 @@ async function startScan(tabId: number): Promise<ScanState> {
     await chrome.debugger.attach(debuggee(tabId), '1.3');
     await sendCommand(tabId, 'Network.enable');
   } else {
-    // A Chrome 114–117 service worker may have restarted while the debugger
-    // session remained attached. Re-enabling Network is safe and verifies it.
     await sendCommand(tabId, 'Network.enable');
   }
 
@@ -243,11 +335,9 @@ async function processFinishedRequest(tabId: number, requestId: string, encodedD
     const body = result.base64Encoded ? decodeBase64Utf8(result.body) : result.body;
     if (new TextEncoder().encode(body).byteLength > MAX_RESPONSE_BYTES) return;
 
-    const settings = await loadRuleSettings();
-    const enabledRuleIds = new Set<RuleId>(
-      complianceRules.filter((rule) => settings[rule.id]).map((rule) => rule.id)
-    );
-    const detections = scanResponseBody(body, enabledRuleIds);
+    const runtimeRules = compileRuleDefinitions(await loadRules());
+    const enabledRuleIds = new Set<RuleId>(runtimeRules.map((rule) => rule.id));
+    const detections = scanResponseBody(body, enabledRuleIds, runtimeRules);
     const state = await loadState(tabId);
     if (!state.attached) return;
 
@@ -387,15 +477,28 @@ chrome.runtime.onMessage.addListener(
             sendResponse({ ok: true, kind: 'SCAN_STATE', state });
             return;
           }
+          case 'GET_RULES': {
+            sendResponse({ ok: true, kind: 'RULES', rules: await loadRules() });
+            return;
+          }
+          case 'CREATE_RULE': {
+            sendResponse({ ok: true, kind: 'RULES', rules: await createRule(message.rule) });
+            return;
+          }
+          case 'UPDATE_RULE': {
+            sendResponse({ ok: true, kind: 'RULES', rules: await updateRule(message.ruleId, message.rule) });
+            return;
+          }
+          case 'DELETE_RULE': {
+            sendResponse({ ok: true, kind: 'RULES', rules: await deleteRule(message.ruleId) });
+            return;
+          }
           case 'GET_RULE_SETTINGS': {
-            const settings = await loadRuleSettings();
-            sendResponse({ ok: true, kind: 'RULE_SETTINGS', settings });
+            sendResponse({ ok: true, kind: 'RULE_SETTINGS', settings: await loadRuleSettings() });
             return;
           }
           case 'SET_RULE_ENABLED': {
-            if (!complianceRules.some((rule) => rule.id === message.ruleId)) throw new Error('未知规则');
-            const settings = await setRuleEnabled(message.ruleId, message.enabled);
-            sendResponse({ ok: true, kind: 'RULE_SETTINGS', settings });
+            sendResponse({ ok: true, kind: 'RULES', rules: await setRuleEnabled(message.ruleId, message.enabled) });
             return;
           }
           default:

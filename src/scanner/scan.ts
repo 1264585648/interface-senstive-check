@@ -1,5 +1,5 @@
 import { complianceRules } from './rules';
-import type { Detection, RuleId } from './types';
+import type { ComplianceRule, Detection, RuleId } from './types';
 
 const MAX_DEPTH = 30;
 const MAX_NODES = 50_000;
@@ -9,11 +9,12 @@ function scanString(
   path: string,
   detections: Detection[],
   enabledRuleIds: ReadonlySet<RuleId>,
+  rules: ComplianceRule[],
   rawOnly = false
 ): void {
-  for (const rule of complianceRules) {
+  for (const rule of rules) {
     if (!enabledRuleIds.has(rule.id)) continue;
-    if (rawOnly && rule.id === 'FULL_BIRTH_DATE') continue;
+    if (rawOnly && rule.scanRaw === false) continue;
 
     for (const match of rule.detect(value, { path })) {
       detections.push({
@@ -31,6 +32,7 @@ function visit(
   path: string,
   detections: Detection[],
   enabledRuleIds: ReadonlySet<RuleId>,
+  rules: ComplianceRule[],
   depth: number,
   budget: { count: number }
 ): void {
@@ -38,19 +40,19 @@ function visit(
   budget.count += 1;
 
   if (typeof node === 'string') {
-    scanString(node, path, detections, enabledRuleIds);
+    scanString(node, path, detections, enabledRuleIds, rules);
     return;
   }
 
   if (typeof node === 'number') {
-    scanString(String(node), path, detections, enabledRuleIds);
+    scanString(String(node), path, detections, enabledRuleIds, rules);
     return;
   }
 
   if (Array.isArray(node)) {
     for (let index = 0; index < node.length; index += 1) {
       if (budget.count >= MAX_NODES) break;
-      visit(node[index], `${path}[${index}]`, detections, enabledRuleIds, depth + 1, budget);
+      visit(node[index], `${path}[${index}]`, detections, enabledRuleIds, rules, depth + 1, budget);
     }
     return;
   }
@@ -59,7 +61,7 @@ function visit(
     for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
       if (budget.count >= MAX_NODES) break;
       const childPath = /^[A-Za-z_$][\w$]*$/.test(key) ? `${path}.${key}` : `${path}[${JSON.stringify(key)}]`;
-      visit(value, childPath, detections, enabledRuleIds, depth + 1, budget);
+      visit(value, childPath, detections, enabledRuleIds, rules, depth + 1, budget);
     }
   }
 }
@@ -77,10 +79,11 @@ function dedupe(detections: Detection[]): Detection[] {
 function appendRawFallback(
   body: string,
   detections: Detection[],
-  enabledRuleIds: ReadonlySet<RuleId>
+  enabledRuleIds: ReadonlySet<RuleId>,
+  rules: ComplianceRule[]
 ): void {
   const raw: Detection[] = [];
-  scanString(body, '$raw', raw, enabledRuleIds, true);
+  scanString(body, '$raw', raw, enabledRuleIds, rules, true);
   const alreadyFound = new Set(detections.map((item) => `${item.ruleId}|${item.rawValue}`));
 
   for (const detection of raw) {
@@ -90,19 +93,18 @@ function appendRawFallback(
 
 export function scanResponseBody(
   body: string,
-  enabledRuleIds: ReadonlySet<RuleId> = new Set(complianceRules.map((rule) => rule.id))
+  enabledRuleIds: ReadonlySet<RuleId> = new Set(complianceRules.map((rule) => rule.id)),
+  rules: ComplianceRule[] = complianceRules
 ): Detection[] {
   if (!body.trim()) return [];
 
   const detections: Detection[] = [];
   try {
     const parsed = JSON.parse(body) as unknown;
-    visit(parsed, '$', detections, enabledRuleIds, 0, { count: 0 });
-    // Scan raw JSON text for universal numeric identifiers. This catches an
-    // unquoted 18-digit ID number that JSON.parse would round as a Number.
-    appendRawFallback(body, detections, enabledRuleIds);
+    visit(parsed, '$', detections, enabledRuleIds, rules, 0, { count: 0 });
+    appendRawFallback(body, detections, enabledRuleIds, rules);
   } catch {
-    scanString(body, '$', detections, enabledRuleIds);
+    scanString(body, '$', detections, enabledRuleIds, rules);
   }
 
   return dedupe(detections);
