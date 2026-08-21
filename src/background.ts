@@ -14,6 +14,7 @@ type ResponseMeta = {
 const states = new Map<number, ScanState>();
 const responses = new Map<number, Map<string, ResponseMeta>>();
 const requestMethods = new Map<number, Map<string, string>>();
+const intentionalDetach = new Set<number>();
 const debuggee = (tabId: number): chrome.debugger.Debuggee => ({ tabId });
 
 function defaultState(tabId: number): ScanState {
@@ -46,22 +47,28 @@ function decodeBase64Utf8(input: string): string {
   return new TextDecoder().decode(bytes);
 }
 
+function sanitizeUrl(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return rawUrl.split(/[?#]/, 1)[0];
+  }
+}
+
 async function startScan(tabId: number): Promise<ScanState> {
   const tab = await chrome.tabs.get(tabId);
-  if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('edge://')) {
-    throw new Error('当前页面不支持调试，请打开普通 http/https 网页后重试。');
+  if (!tab.url || !/^https?:\/\//i.test(tab.url)) {
+    throw new Error('当前页面不支持扫描，请打开普通 http/https 网页后重试。');
   }
 
   const state = await loadState(tabId);
   if (!state.attached) {
     await chrome.debugger.attach(debuggee(tabId), '1.3');
-    await sendCommand(tabId, 'Network.enable', {
-      maxTotalBufferSize: 100_000_000,
-      maxResourceBufferSize: 10_000_000
-    });
+    await sendCommand(tabId, 'Network.enable', { maxTotalBufferSize: 100_000_000, maxResourceBufferSize: 10_000_000 });
   }
 
-  const next = { ...state, attached: true, pageUrl: tab.url, error: undefined };
+  const next = { ...state, attached: true, pageUrl: sanitizeUrl(tab.url), error: undefined };
   responses.set(tabId, responses.get(tabId) ?? new Map());
   requestMethods.set(tabId, requestMethods.get(tabId) ?? new Map());
   await saveState(next);
@@ -72,8 +79,10 @@ async function stopScan(tabId: number): Promise<ScanState> {
   const state = await loadState(tabId);
   if (state.attached) {
     try {
+      intentionalDetach.add(tabId);
       await chrome.debugger.detach(debuggee(tabId));
     } catch {
+      intentionalDetach.delete(tabId);
       // Already detached by Chrome/DevTools.
     }
   }
@@ -101,13 +110,10 @@ chrome.runtime.onStartup.addListener(() => {
 
 chrome.debugger.onDetach.addListener((source) => {
   if (typeof source.tabId !== 'number') return;
+  if (intentionalDetach.delete(source.tabId)) return;
   void (async () => {
     const state = await loadState(source.tabId!);
-    await saveState({
-      ...state,
-      attached: false,
-      error: '调试会话已断开；如果打开了 DevTools，请关闭后重新开始扫描。'
-    });
+    await saveState({ ...state, attached: false, error: '调试会话已断开；如果打开了 DevTools，请关闭后重新开始扫描。' });
   })();
 });
 
@@ -130,11 +136,10 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
       response: { url: string; status: number; mimeType: string };
     };
     if (!['XHR', 'Fetch'].includes(event.type)) return;
-
     const map = responses.get(tabId) ?? new Map<string, ResponseMeta>();
     map.set(event.requestId, {
       requestId: event.requestId,
-      url: event.response.url,
+      url: sanitizeUrl(event.response.url),
       method: requestMethods.get(tabId)?.get(event.requestId) ?? 'UNKNOWN',
       status: event.response.status,
       mimeType: event.response.mimeType
@@ -143,18 +148,24 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
     return;
   }
 
+  if (method === 'Network.loadingFailed') {
+    const event = params as { requestId: string };
+    responses.get(tabId)?.delete(event.requestId);
+    requestMethods.get(tabId)?.delete(event.requestId);
+    return;
+  }
+
   if (method === 'Network.loadingFinished') {
     const event = params as { requestId: string };
     const meta = responses.get(tabId)?.get(event.requestId);
-    if (!meta) return;
+    if (!meta) {
+      requestMethods.get(tabId)?.delete(event.requestId);
+      return;
+    }
 
     void (async () => {
       try {
-        const result = await sendCommand<{ body: string; base64Encoded: boolean }>(
-          tabId,
-          'Network.getResponseBody',
-          { requestId: event.requestId }
-        );
+        const result = await sendCommand<{ body: string; base64Encoded: boolean }>(tabId, 'Network.getResponseBody', { requestId: event.requestId });
         const body = result.base64Encoded ? decodeBase64Utf8(result.body) : result.body;
         const detections = scanResponseBody(body);
         const state = await loadState(tabId);
@@ -170,7 +181,6 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
           mimeType: meta.mimeType,
           detectedAt: now
         }));
-
         await saveState({
           ...state,
           scannedResponses: state.scannedResponses + 1,
@@ -191,32 +201,30 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
   }
 });
 
-chrome.runtime.onMessage.addListener(
-  (message: ExtensionMessage, _sender, sendResponse: (response: ExtensionResponse) => void) => {
-    void (async () => {
-      try {
-        let state: ScanState;
-        switch (message.type) {
-          case 'START_SCAN':
-            state = await startScan(message.tabId);
-            break;
-          case 'STOP_SCAN':
-            state = await stopScan(message.tabId);
-            break;
-          case 'CLEAR_FINDINGS':
-            state = await clearFindings(message.tabId);
-            break;
-          case 'GET_STATE':
-            state = await loadState(message.tabId);
-            break;
-          default:
-            throw new Error('不支持的消息类型');
-        }
-        sendResponse({ ok: true, state });
-      } catch (error) {
-        sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse: (response: ExtensionResponse) => void) => {
+  void (async () => {
+    try {
+      let state: ScanState;
+      switch (message.type) {
+        case 'START_SCAN':
+          state = await startScan(message.tabId);
+          break;
+        case 'STOP_SCAN':
+          state = await stopScan(message.tabId);
+          break;
+        case 'CLEAR_FINDINGS':
+          state = await clearFindings(message.tabId);
+          break;
+        case 'GET_STATE':
+          state = await loadState(message.tabId);
+          break;
+        default:
+          throw new Error('不支持的消息类型');
       }
-    })();
-    return true;
-  }
-);
+      sendResponse({ ok: true, state });
+    } catch (error) {
+      sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
+  })();
+  return true;
+});
