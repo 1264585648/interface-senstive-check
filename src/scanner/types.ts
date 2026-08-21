@@ -4,6 +4,7 @@ export type RuleType = 'builtin' | 'regex';
 
 export interface DetectionContext {
   path: string;
+  fieldName?: string;
 }
 
 export interface Detection {
