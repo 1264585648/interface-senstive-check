@@ -48,7 +48,7 @@ export function RuleManager({
             <code>{rule.expression}</code>
             <div className="v2-rule-actions">
               <button onClick={() => onEdit(rule)}>编辑</button>
-              <button className="danger" onClick={() => onDelete(rule)}>删除</button>
+              {!rule.system && <button className="danger" onClick={() => onDelete(rule)}>删除</button>}
             </div>
           </article>
         ))}
