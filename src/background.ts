@@ -1,3 +1,4 @@
+import { isTextLikeMime } from './scanner/content';
 import { scanResponseBody } from './scanner/scan';
 import { complianceRules } from './scanner/rules';
 import type { Finding, RuleId, RuleSettings, ScanState } from './scanner/types';
@@ -22,6 +23,7 @@ const states = new Map<number, ScanState>();
 const responseMemory = new Map<number, Map<string, ResponseMeta>>();
 const methodMemory = new Map<number, Map<string, string>>();
 const intentionalDetach = new Set<number>();
+let ruleSettingsMutation: Promise<void> = Promise.resolve();
 
 const debuggee = (tabId: number): chrome.debugger.Debuggee => ({ tabId });
 const stateKey = (tabId: number) => `${STATE_KEY_PREFIX}${tabId}`;
@@ -66,10 +68,14 @@ async function loadRuleSettings(): Promise<RuleSettings> {
 }
 
 async function setRuleEnabled(ruleId: RuleId, enabled: boolean): Promise<RuleSettings> {
-  const settings = await loadRuleSettings();
-  settings[ruleId] = enabled;
-  await chrome.storage.local.set({ [RULE_SETTINGS_KEY]: settings });
-  return settings;
+  const operation = ruleSettingsMutation.then(async () => {
+    const settings = await loadRuleSettings();
+    settings[ruleId] = enabled;
+    await chrome.storage.local.set({ [RULE_SETTINGS_KEY]: settings });
+    return settings;
+  });
+  ruleSettingsMutation = operation.then(() => undefined, () => undefined);
+  return operation;
 }
 
 function sendCommand<T = unknown>(
@@ -226,6 +232,7 @@ async function processFinishedRequest(tabId: number, requestId: string, encodedD
   }
 
   try {
+    if (!isTextLikeMime(meta.mimeType)) return;
     if (typeof encodedDataLength === 'number' && encodedDataLength > MAX_RESPONSE_BYTES) return;
 
     const result = await sendCommand<{ body: string; base64Encoded: boolean }>(
@@ -241,6 +248,9 @@ async function processFinishedRequest(tabId: number, requestId: string, encodedD
       complianceRules.filter((rule) => settings[rule.id]).map((rule) => rule.id)
     );
     const detections = scanResponseBody(body, enabledRuleIds);
+    const state = await loadState(tabId);
+    if (!state.attached) return;
+
     const now = Date.now();
     const findings: Finding[] = detections.map((detection, index) => ({
       ...detection,
@@ -255,11 +265,7 @@ async function processFinishedRequest(tabId: number, requestId: string, encodedD
     }));
 
     if (findings.length > 0) emit({ type: FINDINGS_ADDED, tabId, findings });
-
-    const state = await loadState(tabId);
-    if (state.attached) {
-      await saveState({ ...state, scannedResponses: state.scannedResponses + 1, error: undefined });
-    }
+    await saveState({ ...state, scannedResponses: state.scannedResponses + 1, error: undefined });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!message.includes('No resource with given identifier found')) {
@@ -326,6 +332,10 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
       response: { url: string; status: number; mimeType: string };
     };
     if (!['XHR', 'Fetch'].includes(event.type)) return;
+    if (!isTextLikeMime(event.response.mimeType)) {
+      void forgetRequest(tabId, event.requestId);
+      return;
+    }
 
     void (async () => {
       const requestMethod = await readMethod(tabId, event.requestId);

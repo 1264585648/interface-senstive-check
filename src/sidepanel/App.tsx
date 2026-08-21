@@ -4,10 +4,17 @@ import type { Finding, RuleId, RuleSettings, ScanState } from '../scanner/types'
 import type { ExtensionEvent, ExtensionMessage, ExtensionResponse } from '../shared/messages';
 import { FINDINGS_ADDED, SCAN_STATE_UPDATED } from '../shared/messages';
 
-async function currentTabId(): Promise<number> {
+type ActiveTab = {
+  tabId: number;
+  windowId: number;
+};
+
+async function currentTab(): Promise<ActiveTab> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (typeof tab?.id !== 'number') throw new Error('无法获取当前标签页。');
-  return tab.id;
+  if (typeof tab?.id !== 'number' || typeof tab.windowId !== 'number') {
+    throw new Error('无法获取当前标签页。');
+  }
+  return { tabId: tab.id, windowId: tab.windowId };
 }
 
 async function send(message: ExtensionMessage): Promise<ExtensionResponse> {
@@ -93,36 +100,49 @@ export function App() {
 
   useEffect(() => {
     let disposed = false;
+    let panelWindowId: number | undefined;
+    let loadGeneration = 0;
 
-    const loadTab = async (id?: number) => {
+    const loadTab = async (activeId: number) => {
+      const generation = ++loadGeneration;
       try {
-        const activeId = id ?? await currentTabId();
         const nextState = await getScanState(activeId);
-        if (disposed) return;
+        if (disposed || generation !== loadGeneration) return;
         setTabId(activeId);
         setState(nextState);
         setError(undefined);
       } catch (cause) {
-        if (!disposed) setError(cause instanceof Error ? cause.message : String(cause));
+        if (!disposed && generation === loadGeneration) {
+          setError(cause instanceof Error ? cause.message : String(cause));
+        }
       }
     };
 
-    void Promise.all([
-      loadTab(),
-      getRuleSettings().then((settings) => {
-        if (!disposed) setRules(settings);
-      })
-    ]).catch((cause) => {
-      if (!disposed) setError(cause instanceof Error ? cause.message : String(cause));
-    });
+    void (async () => {
+      try {
+        const active = await currentTab();
+        if (disposed) return;
+        panelWindowId = active.windowId;
+        await Promise.all([
+          loadTab(active.tabId),
+          getRuleSettings().then((settings) => {
+            if (!disposed) setRules(settings);
+          })
+        ]);
+      } catch (cause) {
+        if (!disposed) setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    })();
 
-    const onActivated = (activeInfo: { tabId: number }) => {
+    const onActivated = (activeInfo: { tabId: number; windowId: number }) => {
+      if (activeInfo.windowId !== panelWindowId) return;
       void loadTab(activeInfo.tabId);
     };
     chrome.tabs.onActivated.addListener(onActivated);
 
     return () => {
       disposed = true;
+      loadGeneration += 1;
       chrome.tabs.onActivated.removeListener(onActivated);
     };
   }, []);

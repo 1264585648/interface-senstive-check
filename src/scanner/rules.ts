@@ -1,18 +1,17 @@
 import type { ComplianceRule } from './types';
-import { isValidCnIdCard, isValidDateParts } from './validators';
+import { hasValidCnProvinceCode, isValidCnIdCard, isValidDateParts } from './validators';
 
 const MOBILE_REGEX = /(?<!\d)(?:\+?86[-\s]?)?1[3-9]\d(?:[-\s]?\d){8}(?!\d)/g;
 const ID_CARD_18_REGEX = /(?<![0-9A-Za-z])\d{17}[0-9Xx](?![0-9A-Za-z])/g;
 const ID_CARD_15_REGEX = /(?<!\d)\d{15}(?!\d)/g;
 const BIRTH_PATH_REGEX = /(birthday|birth[_-]?(?:day|date|month|ym)|date[_-]?of[_-]?birth|dob|出生日期|出生年月|生日)/i;
-const CN_PROVINCE_CODES = new Set(['11','12','13','14','15','21','22','23','31','32','33','34','35','36','37','41','42','43','44','45','46','50','51','52','53','54','61','62','63','64','65','71','81','82']);
 
 function unique(matches: string[]): string[] {
   return [...new Set(matches)];
 }
 
 function isValidLegacyCnIdCard(value: string): boolean {
-  if (!/^\d{15}$/.test(value) || !CN_PROVINCE_CODES.has(value.slice(0, 2))) return false;
+  if (!/^\d{15}$/.test(value) || !hasValidCnProvinceCode(value) || value.slice(12, 15) === '000') return false;
   const year = Number(`19${value.slice(6, 8)}`);
   const month = Number(value.slice(8, 10));
   const day = Number(value.slice(10, 12));

@@ -34,7 +34,8 @@ function visit(
   depth: number,
   budget: { count: number }
 ): void {
-  if (depth > MAX_DEPTH || budget.count++ > MAX_NODES) return;
+  if (depth > MAX_DEPTH || budget.count >= MAX_NODES) return;
+  budget.count += 1;
 
   if (typeof node === 'string') {
     scanString(node, path, detections, enabledRuleIds);
@@ -47,12 +48,16 @@ function visit(
   }
 
   if (Array.isArray(node)) {
-    node.forEach((item, index) => visit(item, `${path}[${index}]`, detections, enabledRuleIds, depth + 1, budget));
+    for (let index = 0; index < node.length; index += 1) {
+      if (budget.count >= MAX_NODES) break;
+      visit(node[index], `${path}[${index}]`, detections, enabledRuleIds, depth + 1, budget);
+    }
     return;
   }
 
   if (node && typeof node === 'object') {
     for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      if (budget.count >= MAX_NODES) break;
       const childPath = /^[A-Za-z_$][\w$]*$/.test(key) ? `${path}.${key}` : `${path}[${JSON.stringify(key)}]`;
       visit(value, childPath, detections, enabledRuleIds, depth + 1, budget);
     }

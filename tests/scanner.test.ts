@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { isTextLikeMime } from '../src/scanner/content';
 import { scanResponseBody } from '../src/scanner/scan';
 import type { RuleId } from '../src/scanner/types';
 import { isValidCnIdCard } from '../src/scanner/validators';
@@ -51,6 +52,13 @@ describe('scanner', () => {
     }));
   });
 
+  it('rejects ID cards with invalid province address codes', () => {
+    const invalidProvince = '990105194912310023';
+    expect(isValidCnIdCard(invalidProvince)).toBe(false);
+    const result = scanResponseBody(JSON.stringify({ idCard: invalidProvince }));
+    expect(result.some((item) => item.ruleId === 'CN_ID_CARD')).toBe(false);
+  });
+
   it('raw-scans universal identifiers so unsafe JSON numbers are not silently missed', () => {
     const result = scanResponseBody('{"idCard":110105194912310011}');
     expect(result).toContainEqual(expect.objectContaining({
@@ -63,5 +71,14 @@ describe('scanner', () => {
     const enabled = new Set<RuleId>(['CN_ID_CARD', 'FULL_BIRTH_DATE']);
     const result = scanResponseBody(JSON.stringify({ phone: '13800138000' }), enabled);
     expect(result.some((item) => item.ruleId === 'CN_MOBILE')).toBe(false);
+  });
+
+  it('only scans text-like response MIME types', () => {
+    expect(isTextLikeMime('application/json')).toBe(true);
+    expect(isTextLikeMime('application/problem+json; charset=utf-8')).toBe(true);
+    expect(isTextLikeMime('text/plain; charset=utf-8')).toBe(true);
+    expect(isTextLikeMime('application/pdf')).toBe(false);
+    expect(isTextLikeMime('application/octet-stream')).toBe(false);
+    expect(isTextLikeMime('image/png')).toBe(false);
   });
 });
