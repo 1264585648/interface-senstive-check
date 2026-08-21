@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compileRuleDefinitions } from '../src/scanner/rules';
+import { compileRuleDefinitions, validateCustomRegexExpression } from '../src/scanner/rules';
 import { scanResponseBody } from '../src/scanner/scan';
 import type { Finding, RuleDefinition } from '../src/scanner/types';
 import { exportFindingGroupsCsv } from '../src/sidepanel/v2/exportCsv';
@@ -31,6 +31,46 @@ describe('v2 capabilities', () => {
       path: '$.bankCard',
       rawValue: '6222021234567890'
     }));
+  });
+
+  it('rejects custom regex patterns with common catastrophic backtracking shapes', () => {
+    expect(() => validateCustomRegexExpression('(a+)+$')).toThrow(/高风险/);
+    expect(() => validateCustomRegexExpression('(a|aa)+$')).toThrow(/高风险/);
+    expect(() => validateCustomRegexExpression('(a+)\\1')).toThrow(/反向引用/);
+  });
+
+  it('caps the number of matches returned by one custom rule', () => {
+    const definition: RuleDefinition = {
+      id: 'CUSTOM_ANY_CHAR',
+      name: '单字符',
+      description: '',
+      type: 'regex',
+      expression: '.',
+      enabled: true,
+      system: false,
+      createdAt: 1,
+      updatedAt: 1
+    };
+    const [rule] = compileRuleDefinitions([definition]);
+    const input = Array.from({ length: 300 }, (_, index) => String.fromCodePoint(0x4e00 + index)).join('');
+
+    expect(rule.detect(input, { path: '$' })).toHaveLength(200);
+  });
+
+  it('does not execute unsafe persisted custom regex rules', () => {
+    const definition: RuleDefinition = {
+      id: 'CUSTOM_UNSAFE',
+      name: '危险规则',
+      description: '',
+      type: 'regex',
+      expression: '(a+)+$',
+      enabled: true,
+      system: false,
+      createdAt: 1,
+      updatedAt: 1
+    };
+
+    expect(compileRuleDefinitions([definition])).toEqual([]);
   });
 
   it('groups findings by method and sanitized interface path', () => {
