@@ -41,18 +41,26 @@ export function App() {
   useEffect(() => {
     let disposed = false;
 
-    void (async () => {
+    const loadTab = async (id?: number) => {
       try {
-        const id = await currentTabId();
+        const activeId = id ?? await currentTabId();
         if (disposed) return;
-        setTabId(id);
-        setState(await send({ type: 'GET_STATE', tabId: id }));
+        setTabId(activeId);
+        setState(await send({ type: 'GET_STATE', tabId: activeId }));
+        setError(undefined);
       } catch (e) {
         if (!disposed) setError(e instanceof Error ? e.message : String(e));
       }
-    })();
+    };
 
-    return () => { disposed = true; };
+    void loadTab();
+    const onActivated = (activeInfo: chrome.tabs.TabActiveInfo) => { void loadTab(activeInfo.tabId); };
+    chrome.tabs.onActivated.addListener(onActivated);
+
+    return () => {
+      disposed = true;
+      chrome.tabs.onActivated.removeListener(onActivated);
+    };
   }, []);
 
   useEffect(() => {
@@ -65,9 +73,7 @@ export function App() {
 
   const grouped = useMemo(() => {
     const map = new Map<string, number>();
-    for (const finding of state?.findings ?? []) {
-      map.set(finding.ruleId, (map.get(finding.ruleId) ?? 0) + 1);
-    }
+    for (const finding of state?.findings ?? []) map.set(finding.ruleId, (map.get(finding.ruleId) ?? 0) + 1);
     return [...map.entries()];
   }, [state]);
 
