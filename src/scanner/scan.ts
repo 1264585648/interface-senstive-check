@@ -15,13 +15,14 @@ function scanString(
   detections: Detection[],
   enabledRuleIds: ReadonlySet<RuleId>,
   rules: ComplianceRule[],
-  rawOnly = false
+  rawOnly = false,
+  fieldName?: string
 ): void {
   for (const rule of rules) {
     if (!enabledRuleIds.has(rule.id)) continue;
     if (rawOnly && rule.scanRaw === false) continue;
 
-    for (const match of rule.detect(value, { path })) {
+    for (const match of rule.detect(value, { path, fieldName })) {
       detections.push({
         ruleId: rule.id,
         ruleName: rule.name,
@@ -39,7 +40,8 @@ function visit(
   enabledRuleIds: ReadonlySet<RuleId>,
   rules: ComplianceRule[],
   depth: number,
-  budget: ScanBudget
+  budget: ScanBudget,
+  fieldName?: string
 ): void {
   if (depth > MAX_DEPTH) {
     budget.reasons.add('max-depth');
@@ -52,12 +54,12 @@ function visit(
   budget.count += 1;
 
   if (typeof node === 'string') {
-    scanString(node, path, detections, enabledRuleIds, rules);
+    scanString(node, path, detections, enabledRuleIds, rules, false, fieldName);
     return;
   }
 
   if (typeof node === 'number') {
-    scanString(String(node), path, detections, enabledRuleIds, rules);
+    scanString(String(node), path, detections, enabledRuleIds, rules, false, fieldName);
     return;
   }
 
@@ -67,7 +69,7 @@ function visit(
         budget.reasons.add('max-nodes');
         break;
       }
-      visit(node[index], `${path}[${index}]`, detections, enabledRuleIds, rules, depth + 1, budget);
+      visit(node[index], `${path}[${index}]`, detections, enabledRuleIds, rules, depth + 1, budget, fieldName);
     }
     return;
   }
@@ -79,7 +81,7 @@ function visit(
         break;
       }
       const childPath = /^[A-Za-z_$][\w$]*$/.test(key) ? `${path}.${key}` : `${path}[${JSON.stringify(key)}]`;
-      visit(value, childPath, detections, enabledRuleIds, rules, depth + 1, budget);
+      visit(value, childPath, detections, enabledRuleIds, rules, depth + 1, budget, key);
     }
   }
 }
