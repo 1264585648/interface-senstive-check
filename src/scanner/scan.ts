@@ -4,8 +4,9 @@ import type { Detection } from './types';
 const MAX_DEPTH = 30;
 const MAX_NODES = 50_000;
 
-function scanString(value: string, path: string, detections: Detection[]): void {
+function scanString(value: string, path: string, detections: Detection[], rawOnly = false): void {
   for (const rule of complianceRules) {
+    if (rawOnly && rule.id === 'FULL_BIRTH_DATE') continue;
     for (const match of rule.detect(value, { path })) {
       detections.push({
         ruleId: rule.id,
@@ -53,6 +54,15 @@ function dedupe(detections: Detection[]): Detection[] {
   });
 }
 
+function appendRawFallback(body: string, detections: Detection[]): void {
+  const raw: Detection[] = [];
+  scanString(body, '$raw', raw, true);
+  const alreadyFound = new Set(detections.map((item) => `${item.ruleId}|${item.maskedValue}`));
+  for (const detection of raw) {
+    if (!alreadyFound.has(`${detection.ruleId}|${detection.maskedValue}`)) detections.push(detection);
+  }
+}
+
 export function scanResponseBody(body: string): Detection[] {
   if (!body.trim()) return [];
 
@@ -60,6 +70,9 @@ export function scanResponseBody(body: string): Detection[] {
   try {
     const parsed = JSON.parse(body) as unknown;
     visit(parsed, '$', detections, 0, { count: 0 });
+    // Also scan raw JSON text for universal numeric identifiers. This catches values
+    // such as an unquoted 18-digit ID card that JSON.parse would round as a Number.
+    appendRawFallback(body, detections);
   } catch {
     scanString(body, '$', detections);
   }
