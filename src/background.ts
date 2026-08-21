@@ -50,7 +50,17 @@ function decodeBase64Utf8(input: string): string {
 function sanitizeUrl(rawUrl: string): string {
   try {
     const url = new URL(rawUrl);
-    return `${url.origin}${url.pathname}`;
+    const safePath = url.pathname
+      .split('/')
+      .map((segment) => {
+        const decoded = (() => {
+          try { return decodeURIComponent(segment); } catch { return segment; }
+        })();
+        const digitCount = (decoded.match(/\d/g) ?? []).length;
+        return digitCount >= 8 || decoded.length > 32 ? ':redacted' : decoded;
+      })
+      .join('/');
+    return `${url.origin}${safePath}`;
   } catch {
     return rawUrl.split(/[?#]/, 1)[0];
   }
@@ -65,7 +75,7 @@ async function startScan(tabId: number): Promise<ScanState> {
   const state = await loadState(tabId);
   if (!state.attached) {
     await chrome.debugger.attach(debuggee(tabId), '1.3');
-    await sendCommand(tabId, 'Network.enable', { maxTotalBufferSize: 100_000_000, maxResourceBufferSize: 10_000_000 });
+    await sendCommand(tabId, 'Network.enable');
   }
 
   const next = { ...state, attached: true, pageUrl: sanitizeUrl(tab.url), error: undefined };
@@ -106,6 +116,14 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.runtime.onStartup.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => undefined);
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  states.delete(tabId);
+  responses.delete(tabId);
+  requestMethods.delete(tabId);
+  intentionalDetach.delete(tabId);
+  void chrome.storage.session.remove(`scan-state:${tabId}`);
 });
 
 chrome.debugger.onDetach.addListener((source) => {
