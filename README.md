@@ -73,6 +73,13 @@ npm run build
 - `docs/prototype.html`：高保真 HTML 原型
 - `docs/chrome-extension-guidelines.md`：Chrome 扩展工程规范
 
+## 验证状态
+
+GitHub Actions 已验证：
+
+- `npm test`：通过
+- `npm run build`：通过
+
 ## 当前限制
 
 - 只监听用户主动开始采集时所在的当前标签页。
