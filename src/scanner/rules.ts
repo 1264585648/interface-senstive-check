@@ -1,4 +1,4 @@
-import type { ComplianceRule } from './types';
+import type { ComplianceRule, RuleDefinition } from './types';
 import { hasValidCnProvinceCode, isValidCnIdCard, isValidDateParts } from './validators';
 
 const MOBILE_REGEX = /(?<!\d)(?:\+?86[-\s]?)?1[3-9]\d(?:[-\s]?\d){8}(?!\d)/g;
@@ -56,6 +56,7 @@ export const complianceRules: ComplianceRule[] = [
     name: '手机号',
     description: '中国大陆完整手机号',
     expression: '1[3-9]\\d{9}',
+    scanRaw: true,
     detect: (value) => unique(value.match(MOBILE_REGEX) ?? [])
   },
   {
@@ -63,6 +64,7 @@ export const complianceRules: ComplianceRule[] = [
     name: '身份证号',
     description: '中国居民身份证号',
     expression: '\\d{17}[\\dXx] + checksum',
+    scanRaw: true,
     detect: (value) => unique([
       ...(value.match(ID_CARD_18_REGEX) ?? []).filter(isValidCnIdCard),
       ...(value.match(ID_CARD_15_REGEX) ?? []).filter(isValidLegacyCnIdCard)
@@ -73,6 +75,64 @@ export const complianceRules: ComplianceRule[] = [
     name: '完整出生日期',
     description: '生日语义字段中的完整年月日',
     expression: '\\d{4}-\\d{2}-\\d{2}',
+    scanRaw: false,
     detect: (value, context) => BIRTH_PATH_REGEX.test(context.path) ? detectBirthDates(value) : []
   }
 ];
+
+export function defaultRuleDefinitions(now = Date.now()): RuleDefinition[] {
+  return complianceRules.map((rule) => ({
+    id: rule.id,
+    name: rule.name,
+    description: rule.description,
+    type: 'builtin',
+    expression: rule.expression,
+    enabled: true,
+    system: true,
+    createdAt: now,
+    updatedAt: now
+  }));
+}
+
+function compileRegexRule(definition: RuleDefinition): ComplianceRule {
+  return {
+    id: definition.id,
+    name: definition.name,
+    description: definition.description,
+    expression: definition.expression,
+    scanRaw: true,
+    detect: (value) => {
+      try {
+        const regex = new RegExp(definition.expression, 'g');
+        return unique(Array.from(value.matchAll(regex), (match) => match[0]).filter(Boolean));
+      } catch {
+        return [];
+      }
+    }
+  };
+}
+
+export function compileRuleDefinitions(definitions: RuleDefinition[]): ComplianceRule[] {
+  const builtins = new Map(complianceRules.map((rule) => [rule.id, rule]));
+  const compiled: ComplianceRule[] = [];
+
+  for (const definition of definitions) {
+    if (!definition.enabled) continue;
+
+    if (definition.type === 'builtin') {
+      const builtin = builtins.get(definition.id);
+      if (!builtin) continue;
+      compiled.push({
+        ...builtin,
+        name: definition.name,
+        description: definition.description,
+        expression: definition.expression
+      });
+      continue;
+    }
+
+    compiled.push(compileRegexRule(definition));
+  }
+
+  return compiled;
+}

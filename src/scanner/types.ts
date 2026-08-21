@@ -1,4 +1,6 @@
-export type RuleId = 'CN_MOBILE' | 'CN_ID_CARD' | 'FULL_BIRTH_DATE';
+export type RuleId = string;
+
+export type RuleType = 'builtin' | 'regex';
 
 export interface DetectionContext {
   path: string;
@@ -16,7 +18,27 @@ export interface ComplianceRule {
   name: string;
   description: string;
   expression: string;
+  scanRaw?: boolean;
   detect(value: string, context: DetectionContext): string[];
+}
+
+export interface RuleDefinition {
+  id: RuleId;
+  name: string;
+  description: string;
+  type: RuleType;
+  expression: string;
+  enabled: boolean;
+  system: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface RuleInput {
+  name: string;
+  description: string;
+  expression: string;
+  enabled: boolean;
 }
 
 export interface Finding extends Detection {
