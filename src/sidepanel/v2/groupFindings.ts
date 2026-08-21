@@ -5,7 +5,8 @@ export function groupFindings(findings: Finding[]): FindingGroup[] {
   const map = new Map<string, FindingGroup>();
 
   for (const finding of findings) {
-    const url = new URL(finding.url).pathname;
+    const parsed = new URL(finding.url);
+    const url = `${parsed.origin}${parsed.pathname}`;
     const key = `${finding.method}:${url}`;
     const current = map.get(key) ?? {
       key,
