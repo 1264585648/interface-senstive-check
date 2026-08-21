@@ -1,5 +1,5 @@
 import { isTextLikeMime } from './scanner/content';
-import { compileRuleDefinitions, defaultRuleDefinitions } from './scanner/rules';
+import { compileRuleDefinitions, defaultRuleDefinitions, validateCustomRegexExpression } from './scanner/rules';
 import { scanResponseBody } from './scanner/scan';
 import type { Finding, RuleDefinition, RuleId, RuleInput, RuleSettings, ScanState } from './scanner/types';
 import type { ExtensionEvent, ExtensionMessage, ExtensionResponse } from './shared/messages';
@@ -70,14 +70,7 @@ function validateRuleInput(rule: RuleInput, system = false): RuleInput {
   const normalized = normalizeInput(rule);
   if (!normalized.name) throw new Error('规则名称不能为空');
   if (normalized.name.length > 60) throw new Error('规则名称不能超过 60 个字符');
-  if (!system) {
-    if (!normalized.expression) throw new Error('正则表达式不能为空');
-    try {
-      new RegExp(normalized.expression, 'g');
-    } catch (error) {
-      throw new Error(`正则表达式无效：${error instanceof Error ? error.message : String(error)}`);
-    }
-  }
+  if (!system) validateCustomRegexExpression(normalized.expression);
   return normalized;
 }
 
