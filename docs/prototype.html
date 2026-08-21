@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>接口敏感信息检测 - 高保真原型</title>
+  <style>
+    :root{--bg:#f8fafc;--panel:#fff;--ink:#111827;--muted:#64748b;--line:#dfe6ef;--blue:#1677ff;--green:#16a34a;--red:#ff2020;--orange:#f97316;--shadow:0 6px 22px rgba(15,23,42,.055)}
+    *{box-sizing:border-box}html,body{margin:0;min-height:100%;background:#fff}body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",Arial,sans-serif;color:var(--ink);background:linear-gradient(#fff 0,#fff 112px,#f9fbfd 112px,#f9fbfd 100%)}button,input{font:inherit}
+    .page{min-height:100vh}.topbar{height:112px;display:flex;align-items:center;justify-content:space-between;padding:0 54px 0 31px;border-bottom:1px solid #e6ebf2;background:rgba(255,255,255,.98)}
+    .brand{display:flex;align-items:center;gap:24px}.brand-mark{width:56px;height:64px;display:grid;place-items:center;filter:drop-shadow(0 7px 10px rgba(22,119,255,.16))}.brand-mark svg{width:56px;height:64px;display:block}.brand h1{margin:0;font-size:31px;line-height:1.15;letter-spacing:.01em;font-weight:800;color:#0f172a}.brand p{margin:11px 0 0;font-size:16px;color:#64748b;letter-spacing:.02em}
+    .status{min-width:132px;height:50px;display:flex;align-items:center;justify-content:center;gap:12px;color:#159447;background:#f2fbf5;border:1px solid #bfe8cd;border-radius:10px;font-size:20px;font-weight:700}.status .dot{width:12px;height:12px;border-radius:50%;background:#13b84b}.status.idle{color:#64748b;background:#f8fafc;border-color:#dfe6ef}.status.idle .dot{background:#94a3b8}
+    .workspace{display:grid;grid-template-columns:510px minmax(0,1fr);gap:28px;padding:24px 28px 50px 27px;min-height:816px;background:#f9fbfd}.left-col{display:flex;flex-direction:column;gap:18px}.card{background:#fff;border:1px solid #dfe6ef;border-radius:14px;box-shadow:var(--shadow)}
+    .rules-card{padding:23px 20px 18px}.card-title{font-size:22px;font-weight:800;margin:0 0 18px;color:#0f172a}.rule-list{display:flex;flex-direction:column;gap:10px}.rule-item{min-height:128px;display:grid;grid-template-columns:48px 58px 1fr;align-items:start;gap:14px;padding:18px 16px;border:1px solid #dfe6ef;border-radius:12px;background:#fff}
+    .switch{position:relative;width:40px;height:24px;margin-top:10px;display:inline-block}.switch input{opacity:0;width:0;height:0}.slider{position:absolute;inset:0;border-radius:999px;background:#cbd5e1;transition:.18s ease;box-shadow:inset 0 0 0 1px rgba(15,23,42,.05)}.slider:before{content:"";position:absolute;left:2px;top:2px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(15,23,42,.28);transition:.18s ease}.switch input:checked+.slider{background:#1677ff}.switch input:checked+.slider:before{transform:translateX(16px)}
+    .rule-icon{width:52px;height:52px;border-radius:12px;display:grid;place-items:center;background:#eef5ff;border:1px solid #d4e5ff;color:#1677ff}.rule-icon svg{width:27px;height:27px;stroke:currentColor}.rule-name{font-size:18px;font-weight:800;margin:2px 0 8px;color:#111827}.rule-desc{font-size:15px;color:#65748b;margin-bottom:12px}.regex{display:flex;align-items:center;height:36px;padding:0 10px;border:1px solid #dfe6ef;border-radius:8px;background:#fafcff;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;color:#334155;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .control-card{padding:20px 20px 16px}.control-card .card-title{margin-bottom:14px}.control-actions{display:grid;grid-template-columns:1fr 1fr;gap:22px}.action-btn{height:58px;border-radius:9px;border:1px solid #cbd5e1;background:#fff;display:flex;align-items:center;justify-content:center;gap:12px;font-size:18px;font-weight:800;cursor:pointer;transition:.15s ease}.action-btn:disabled{cursor:not-allowed;color:#aab4c2;background:#f8fafc;border-color:#cfd7e2}.action-btn.start{color:#16a34a;border-color:#83dca6;background:#fbfffc}.action-btn.stop{color:#ef2020;border-color:#ff4343;background:#fff}.action-btn:not(:disabled):hover{transform:translateY(-1px);box-shadow:0 5px 14px rgba(15,23,42,.07)}.play{width:0;height:0;border-top:8px solid transparent;border-bottom:8px solid transparent;border-left:13px solid currentColor}.stop-icon{width:16px;height:16px;border-radius:2px;background:currentColor}
+    .info-card{min-height:92px;padding:17px 20px;display:flex;align-items:flex-start;gap:13px;color:#475569;font-size:15px;line-height:1.8;border-color:#d8e6fb;background:#fbfdff}.info-icon{flex:none;width:27px;height:27px;border-radius:50%;display:grid;place-items:center;background:#1677ff;color:#fff;font-weight:800;margin-top:1px}
+    .results-card{padding:22px 28px 28px;min-width:0;min-height:735px}.results-card .card-title{margin-bottom:25px}.table-shell{border:1px solid #dfe6ef;border-radius:10px;overflow:hidden;background:#fff}table{width:100%;border-collapse:collapse;table-layout:fixed}thead th{height:66px;padding:0 28px;text-align:left;font-size:16px;font-weight:800;color:#111827;background:#fbfcfe;border-bottom:1px solid #dfe6ef}tbody td{height:84px;padding:0 28px;border-bottom:1px solid #dfe6ef;font-size:17px;color:#172033;vertical-align:middle}tbody tr:last-child td{border-bottom:0}tbody tr:hover{background:#fcfdff}
+    .col-time{width:13%}.col-api{width:28%}.col-type{width:17%}.col-value{width:27%}.col-path{width:25%}.api{white-space:nowrap;color:#1f2937}.tag{display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:0 12px;border-radius:9px;font-size:16px;font-weight:700;border:1px solid transparent;white-space:nowrap}.tag.phone{color:#0f9d4c;background:#eefaf2;border-color:#b9e9c9}.tag.id{color:#ff2727;background:#fff2f2;border-color:#ffc2c2}.tag.birth{color:#f26b12;background:#fff6ed;border-color:#ffc891}.raw{color:#ff1f1f;font-size:19px;font-weight:500;white-space:nowrap;font-variant-numeric:tabular-nums}.path{color:#1f2937;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.empty{display:none;min-height:570px;align-items:center;justify-content:center;text-align:center;color:#94a3b8;font-size:16px}.empty.show{display:flex}.hidden{display:none!important}
+    @media(max-width:1180px){.workspace{grid-template-columns:430px minmax(0,1fr)}.brand h1{font-size:27px}.results-card{padding-left:18px;padding-right:18px}thead th,tbody td{padding-left:18px;padding-right:18px}}@media(max-width:980px){.workspace{grid-template-columns:1fr}.results-card{min-height:auto}.table-shell{overflow:auto}table{min-width:920px}}@media(max-width:620px){.topbar{height:auto;min-height:96px;padding:18px 16px;gap:12px}.brand{gap:12px}.brand-mark{width:44px;height:50px}.brand-mark svg{width:44px;height:50px}.brand h1{font-size:22px}.brand p{font-size:12px;margin-top:6px}.status{min-width:92px;height:40px;font-size:15px}.workspace{padding:14px;gap:14px}.rules-card,.control-card,.results-card{padding-left:14px;padding-right:14px}.rule-item{grid-template-columns:42px 48px 1fr;padding:14px 12px}.rule-icon{width:46px;height:46px}.control-actions{gap:10px}.action-btn{font-size:15px}}
+  </style>
+</head>
+<body>
+<div class="page">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true"><svg viewBox="0 0 56 64" fill="none"><path d="M28 2 51 10.5v17.2C51 43.9 41.4 56.1 28 62 14.6 56.1 5 43.9 5 27.7V10.5L28 2Z" fill="#1677FF"/><path d="M20 18.5v26l23-13-23-13Z" fill="white" opacity=".97"/></svg></div>
+      <div><h1>接口敏感信息检测</h1><p>采集当前页面接口响应，检查是否存在敏感信息</p></div>
+    </div>
+    <div class="status" id="status"><span class="dot"></span><span id="statusText">采集中</span></div>
+  </header>
+  <main class="workspace">
+    <section class="left-col">
+      <div class="card rules-card">
+        <h2 class="card-title">规则列表</h2>
+        <div class="rule-list">
+          <div class="rule-item">
+            <label class="switch" aria-label="手机号规则"><input type="checkbox" checked data-rule="phone"><span class="slider"></span></label>
+            <div class="rule-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><rect x="7" y="2.5" width="10" height="19" rx="1.7"/><path d="M9.5 5h5M10 18.5h4"/></svg></div>
+            <div><div class="rule-name">手机号</div><div class="rule-desc">中国大陆完整手机号</div><div class="regex">1[3-9]\d{9}</div></div>
+          </div>
+          <div class="rule-item">
+            <label class="switch" aria-label="身份证号规则"><input type="checkbox" checked data-rule="id"><span class="slider"></span></label>
+            <div class="rule-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.7"><rect x="2.5" y="5" width="19" height="14" rx="2"/><circle cx="8" cy="11" r="2"/><path d="M5.5 16c.6-1.8 4.4-1.8 5 0M13 9h5M13 12h5M13 15h4"/></svg></div>
+            <div><div class="rule-name">身份证号</div><div class="rule-desc">中国居民身份证号</div><div class="regex">\d{17}[\dXx]</div></div>
+          </div>
+          <div class="rule-item">
+            <label class="switch" aria-label="完整出生日期规则"><input type="checkbox" checked data-rule="birth"><span class="slider"></span></label>
+            <div class="rule-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 2.5v5M17 2.5v5M3 9h18"/></svg></div>
+            <div><div class="rule-name">完整出生日期</div><div class="rule-desc">生日语义字段中的完整年月日</div><div class="regex">\d{4}-\d{2}-\d{2}</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="card control-card">
+        <h2 class="card-title">采集控制</h2>
+        <div class="control-actions">
+          <button class="action-btn start" id="startBtn" disabled><span class="play"></span>开始采集</button>
+          <button class="action-btn stop" id="stopBtn"><span class="stop-icon"></span>结束采集</button>
+        </div>
+      </div>
+      <div class="card info-card"><div class="info-icon">i</div><div>命中结果直接展示接口返回明文，仅用于当前采集会话确认；<br>不会持久化保存或上传。</div></div>
+    </section>
+    <section class="card results-card">
+      <h2 class="card-title">检测结果</h2>
+      <div class="table-shell" id="tableShell">
+        <table>
+          <thead><tr><th class="col-time">时间</th><th class="col-api">接口</th><th class="col-type">类型</th><th class="col-value">敏感信息（明文）</th><th class="col-path">位置</th></tr></thead>
+          <tbody id="resultBody">
+            <tr data-rule="phone"><td>14:32:18</td><td class="api">GET /api/user/detail</td><td><span class="tag phone">手机号</span></td><td class="raw">13800138000</td><td class="path">$.data.user.phone</td></tr>
+            <tr data-rule="id"><td>14:32:11</td><td class="api">POST /api/order/create</td><td><span class="tag id">身份证号</span></td><td class="raw">11010519491231002X</td><td class="path">$.data.idCard</td></tr>
+            <tr data-rule="birth"><td>14:32:07</td><td class="api">GET /api/user/info</td><td><span class="tag birth">完整出生日期</span></td><td class="raw">1990-05-18</td><td class="path">$.data.birthDate</td></tr>
+            <tr data-rule="phone"><td>14:31:59</td><td class="api">GET /api/customers</td><td><span class="tag phone">手机号</span></td><td class="raw">13900123456</td><td class="path">$.data.list[0].mobile</td></tr>
+            <tr data-rule="id"><td>14:31:52</td><td class="api">POST /api/user/submit</td><td><span class="tag id">身份证号</span></td><td class="raw">320582199012120018</td><td class="path">$.data.idCard</td></tr>
+            <tr data-rule="birth"><td>14:31:41</td><td class="api">GET /api/user/info</td><td><span class="tag birth">完整出生日期</span></td><td class="raw">1988-12-01</td><td class="path">$.data.list[1].birth</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="empty" id="empty">暂无敏感信息</div>
+    </section>
+  </main>
+</div>
+<script>
+  const status=document.getElementById('status'),statusText=document.getElementById('statusText'),startBtn=document.getElementById('startBtn'),stopBtn=document.getElementById('stopBtn'),resultBody=document.getElementById('resultBody'),tableShell=document.getElementById('tableShell'),empty=document.getElementById('empty');
+  const rules=[...document.querySelectorAll('input[data-rule]')];let collecting=true;
+  function applyRules(){const enabled=new Set(rules.filter(i=>i.checked).map(i=>i.dataset.rule));[...resultBody.querySelectorAll('tr')].forEach(row=>row.classList.toggle('hidden',!enabled.has(row.dataset.rule)));const visible=[...resultBody.querySelectorAll('tr')].some(row=>!row.classList.contains('hidden'));tableShell.style.display=visible?'block':'none';empty.classList.toggle('show',!visible)}
+  function renderState(){status.classList.toggle('idle',!collecting);statusText.textContent=collecting?'采集中':'已结束';startBtn.disabled=collecting;stopBtn.disabled=!collecting}
+  startBtn.addEventListener('click',()=>{collecting=true;renderState()});stopBtn.addEventListener('click',()=>{collecting=false;renderState()});rules.forEach(rule=>rule.addEventListener('change',applyRules));applyRules();renderState();
+</script>
+</body>
+</html>
