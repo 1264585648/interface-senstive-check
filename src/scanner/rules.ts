@@ -11,11 +11,6 @@ function unique(matches: string[]): string[] {
   return [...new Set(matches)];
 }
 
-function normalizeMobile(value: string): string {
-  const digits = value.replace(/\D/g, '');
-  return digits.length > 11 && digits.startsWith('86') ? digits.slice(-11) : digits;
-}
-
 function isValidLegacyCnIdCard(value: string): boolean {
   if (!/^\d{15}$/.test(value) || !CN_PROVINCE_CODES.has(value.slice(0, 2))) return false;
   const year = Number(`19${value.slice(6, 8)}`);
@@ -48,6 +43,7 @@ function detectBirthDates(value: string): string[] {
     /(?<!\d)(19\d{2}|20\d{2})年(0?[1-9]|1[0-2])月(?!\d)/g,
     /(?<!\d)(19\d{2}|20\d{2})(0[1-9]|1[0-2])(?!\d)/g
   ];
+
   for (const regex of monthPatterns) {
     for (const match of value.matchAll(regex)) results.push(match[0]);
   }
@@ -58,30 +54,26 @@ function detectBirthDates(value: string): string[] {
 export const complianceRules: ComplianceRule[] = [
   {
     id: 'CN_MOBILE',
-    name: '中国大陆手机号明文',
-    detect: (value) => unique(value.match(MOBILE_REGEX) ?? []),
-    mask: (value) => {
-      const mobile = normalizeMobile(value);
-      return mobile.length === 11 ? `${mobile.slice(0, 3)}****${mobile.slice(-4)}` : '***********';
-    }
+    name: '手机号',
+    description: '中国大陆完整手机号',
+    expression: '1[3-9]\\d{9}',
+    detect: (value) => unique(value.match(MOBILE_REGEX) ?? [])
   },
   {
     id: 'CN_ID_CARD',
-    name: '中国居民身份证号明文',
+    name: '身份证号',
+    description: '中国居民身份证号',
+    expression: '\\d{17}[\\dXx] + checksum',
     detect: (value) => unique([
       ...(value.match(ID_CARD_18_REGEX) ?? []).filter(isValidCnIdCard),
       ...(value.match(ID_CARD_15_REGEX) ?? []).filter(isValidLegacyCnIdCard)
-    ]),
-    mask: (value) => `${value.slice(0, 6)}${'*'.repeat(Math.max(5, value.length - 10))}${value.slice(-4)}`
+    ])
   },
   {
     id: 'FULL_BIRTH_DATE',
-    name: '出生年月/完整出生日期明文',
-    detect: (value, context) => BIRTH_PATH_REGEX.test(context.path) ? detectBirthDates(value) : [],
-    mask: (value) => {
-      return value.includes('日') || /[-/.]\d{1,2}[-/.]\d{1,2}$/.test(value) || /^\d{8}$/.test(value)
-        ? '****-**-**'
-        : '****-**';
-    }
+    name: '完整出生日期',
+    description: '生日语义字段中的完整年月日',
+    expression: '\\d{4}-\\d{2}-\\d{2}',
+    detect: (value, context) => BIRTH_PATH_REGEX.test(context.path) ? detectBirthDates(value) : []
   }
 ];
