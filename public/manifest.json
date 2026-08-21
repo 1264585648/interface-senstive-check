@@ -3,7 +3,7 @@
   "name": "Interface Sensitive Check",
   "version": "0.1.0",
   "description": "检查网页接口响应中是否明文返回手机号、身份证号、完整出生日期等敏感信息。",
-  "minimum_chrome_version": "118",
+  "minimum_chrome_version": "114",
   "permissions": ["debugger", "storage", "sidePanel"],
   "background": {
     "service_worker": "background.js",
