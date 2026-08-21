@@ -7,8 +7,10 @@
 - 使用 Manifest V3。
 - Background 使用 Extension Service Worker，不使用长期存活的 background page。
 - UI 使用 Chrome Side Panel API，不向业务网页注入 UI。
-- 最低 Chrome 版本设为 118。
-  - 原因：Chrome 118 起，活跃的 `chrome.debugger` 会话会保持 Extension Service Worker 存活，适合本项目“采集中只在内存处理敏感明文”的实现方式。
+- 最低 Chrome 版本设为 **114**。
+  - `chrome.sidePanel` 从 Chrome 114 开始支持，这是当前产品 UI 方案的真正最低版本。
+  - `chrome.debugger` 的 MV3 Promise API 在更早版本已支持，因此不是限制因素。
+  - Chrome 118 起 active debugger session 会自动保持 Service Worker 存活；Chrome 114–117 没有这一增强，因此代码不能依赖 Service Worker 永久在线。
 
 ## 2. 单一用途
 
@@ -49,9 +51,17 @@ MVP 只申请必要权限：
 
 ### storage
 
-仅允许保存非敏感配置，例如：
+允许保存两类**非敏感数据**：
 
-- 规则是否启用。
+1. 用户配置，例如规则是否启用。
+2. 为兼容 Chrome 114–117 Service Worker 被回收而保存的采集元数据，例如：
+   - 当前采集 tabId。
+   - attached 状态。
+   - requestId。
+   - HTTP Method。
+   - HTTP Status。
+   - MIME Type。
+   - 已去 query / fragment 且动态路径已裁剪的 URL。
 
 禁止保存：
 
@@ -116,15 +126,31 @@ Extension Service Worker：
 - 不访问 DOM。
 - 只负责权限调用、CDP 监听、规则扫描和消息分发。
 - 不假设普通全局变量可以永久存活。
-- 采集期间依赖 Chrome 118+ 的 active debugger session 保持 Service Worker 存活。
-- 非敏感配置使用 `chrome.storage`。
+- 所有事件监听器必须在模块顶层同步注册。
+- Chrome 118+ 可受益于 active debugger session 自动保活。
+- Chrome 114–117 必须允许 Service Worker 在空闲时被 Chrome 正常回收，不能用人为无限定时器强行保活。
 
-采集过程中可使用内存 Map 保存：
+### Chrome 114–117 恢复策略
 
-- requestId -> method
-- requestId -> response metadata
+为兼容 Service Worker 生命周期，以下数据可写入 `chrome.storage.session`：
 
-采集结束后必须清理。
+```text
+scan-state:<tabId>
+pending-method:<tabId>:<requestId>
+pending-response:<tabId>:<requestId>
+```
+
+其中 pending response 只能包含已经安全处理后的非敏感元数据。
+
+当后续 debugger event 唤醒 Service Worker 时：
+
+- 从 `chrome.storage.session` 读取所需 request metadata。
+- 获取 Response Body。
+- 在内存完成扫描。
+- 将命中明文通过 runtime message 发送到 Side Panel。
+- 随即删除 pending metadata。
+
+任何情况下都不得为了恢复 Service Worker 而持久化 Response Body 或命中原文。
 
 ## 6. CDP 使用范围
 
@@ -174,7 +200,7 @@ FINDINGS_ADDED
 所有携带 `tabId` 的操作都必须验证：
 
 - tabId 是 number。
-- 对应目标存在。
+- 对应 debugger target 存在。
 - 目标为普通 `http://` / `https://` 页面。
 
 不支持从网页 / content script 触发任意 debugger 命令。
@@ -238,6 +264,7 @@ Chrome 在以下情况可能断开 debugger：
 插件必须监听 `chrome.debugger.onDetach` 并：
 
 - 将采集状态切换为结束 / 中断。
+- 清理 pending metadata。
 - 在 Side Panel 给出明确提示。
 - 不自动重新 attach，等待用户再次点击开始采集。
 
@@ -266,6 +293,11 @@ npm run build
 - 普通业务日期不误报出生日期。
 - JSON 大整数兜底。
 
+兼容性至少覆盖：
+
+- Chrome 114–117：Service Worker 可被正常回收后继续处理新 debugger events。
+- Chrome 118+：利用浏览器自身 debugger lifetime 改善，不写版本专属业务逻辑。
+
 ## 15. 当前架构决定
 
 MVP 最终数据流：
@@ -280,6 +312,8 @@ Service Worker
 chrome.debugger.attach
         ↓
 CDP Network Events
+        ↓
+非敏感 request metadata -> chrome.storage.session（兼容恢复）
         ↓
 Network.getResponseBody
         ↓
