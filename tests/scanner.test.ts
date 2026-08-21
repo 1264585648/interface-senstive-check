@@ -12,6 +12,14 @@ describe('scanner', () => {
     }));
   });
 
+  it('detects formatted mobile numbers as plaintext', () => {
+    const result = scanResponseBody(JSON.stringify({ phone: '+86 138-0013-8000' }));
+    expect(result).toContainEqual(expect.objectContaining({
+      ruleId: 'CN_MOBILE',
+      maskedValue: '138****8000'
+    }));
+  });
+
   it('detects complete birth dates only on birthday-like fields', () => {
     const result = scanResponseBody(JSON.stringify({
       birthday: '1990-05-18',
@@ -34,5 +42,10 @@ describe('scanner', () => {
     expect(isValidCnIdCard('110105194912310021')).toBe(false);
     const result = scanResponseBody(JSON.stringify({ idCard: valid }));
     expect(result).toContainEqual(expect.objectContaining({ ruleId: 'CN_ID_CARD', path: '$.idCard' }));
+  });
+
+  it('raw-scans universal identifiers so unsafe JSON numbers are not silently missed', () => {
+    const result = scanResponseBody('{"idCard":110105194912310011}');
+    expect(result).toContainEqual(expect.objectContaining({ ruleId: 'CN_ID_CARD' }));
   });
 });
