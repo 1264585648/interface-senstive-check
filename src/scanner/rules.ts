@@ -1,13 +1,18 @@
 import type { ComplianceRule } from './types';
 import { isValidCnIdCard, isValidDateParts } from './validators';
 
-const MOBILE_REGEX = /(?<!\d)1[3-9]\d{9}(?!\d)/g;
+const MOBILE_REGEX = /(?<!\d)(?:\+?86[-\s]?)?1[3-9]\d(?:[-\s]?\d){8}(?!\d)/g;
 const ID_CARD_18_REGEX = /(?<![0-9A-Za-z])\d{17}[0-9Xx](?![0-9A-Za-z])/g;
 const ID_CARD_15_REGEX = /(?<!\d)\d{15}(?!\d)/g;
 const BIRTH_PATH_REGEX = /(birthday|birth[_-]?date|date[_-]?of[_-]?birth|dob|出生日期|出生年月|生日)/i;
 
 function unique(matches: string[]): string[] {
   return [...new Set(matches)];
+}
+
+function normalizeMobile(value: string): string {
+  const digits = value.replace(/\D/g, '');
+  return digits.length > 11 && digits.startsWith('86') ? digits.slice(-11) : digits;
 }
 
 function isValidLegacyCnIdCard(value: string): boolean {
@@ -43,7 +48,10 @@ export const complianceRules: ComplianceRule[] = [
     id: 'CN_MOBILE',
     name: '中国大陆手机号明文',
     detect: (value) => unique(value.match(MOBILE_REGEX) ?? []),
-    mask: (value) => `${value.slice(0, 3)}****${value.slice(-4)}`
+    mask: (value) => {
+      const mobile = normalizeMobile(value);
+      return mobile.length === 11 ? `${mobile.slice(0, 3)}****${mobile.slice(-4)}` : '***********';
+    }
   },
   {
     id: 'CN_ID_CARD',
