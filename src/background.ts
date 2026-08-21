@@ -4,6 +4,7 @@ import { scanResponseBodyDetailed } from './scanner/scan';
 import type { Finding, RuleDefinition, RuleId, RuleInput, RuleSettings, ScanState } from './scanner/types';
 import type { ExtensionEvent, ExtensionMessage, ExtensionResponse } from './shared/messages';
 import { FINDINGS_ADDED, RULES_UPDATED, SCAN_STATE_UPDATED } from './shared/messages';
+import { sanitizeUrl } from './shared/url';
 
 type ResponseMeta = {
   requestId: string;
@@ -84,13 +85,38 @@ function validateRuleInput(rule: RuleInput, system = false): RuleInput {
   return normalized;
 }
 
+function reconcileRules(persisted: RuleDefinition[]): RuleDefinition[] {
+  const defaults = defaultRuleDefinitions();
+  const persistedById = new Map(persisted.map((rule) => [rule.id, rule]));
+  const builtinIds = new Set(defaults.map((rule) => rule.id));
+  const builtins = defaults.map((fallback) => {
+    const existing = persistedById.get(fallback.id);
+    if (!existing) return fallback;
+    return {
+      ...fallback,
+      name: existing.name,
+      description: existing.description,
+      enabled: existing.enabled,
+      createdAt: existing.createdAt,
+      updatedAt: existing.updatedAt
+    };
+  });
+  const customRules = persisted.filter((rule) => !builtinIds.has(rule.id) && !rule.system && rule.type === 'regex');
+  return [...builtins, ...customRules];
+}
+
 async function loadRules(): Promise<RuleDefinition[]> {
   if (rulesCache) return rulesCache.map((rule) => ({ ...rule }));
 
   const stored = await chrome.storage.local.get([RULES_KEY, RULE_SETTINGS_KEY]);
   const persisted = stored[RULES_KEY];
   if (Array.isArray(persisted)) {
-    rulesCache = (persisted as RuleDefinition[]).map((rule) => ({ ...rule }));
+    const current = persisted as RuleDefinition[];
+    const reconciled = reconcileRules(current);
+    rulesCache = reconciled.map((rule) => ({ ...rule }));
+    if (JSON.stringify(reconciled) !== JSON.stringify(current)) {
+      await chrome.storage.local.set({ [RULES_KEY]: reconciled });
+    }
     return rulesCache.map((rule) => ({ ...rule }));
   }
 
@@ -159,7 +185,9 @@ async function updateRule(ruleId: RuleId, input: RuleInput): Promise<RuleDefinit
 
 async function deleteRule(ruleId: RuleId): Promise<RuleDefinition[]> {
   return mutateRules((rules) => {
-    if (!rules.some((rule) => rule.id === ruleId)) throw new Error('规则不存在');
+    const existing = rules.find((rule) => rule.id === ruleId);
+    if (!existing) throw new Error('规则不存在');
+    if (existing.system) throw new Error('内置规则不能删除，只能停用');
     return rules.filter((rule) => rule.id !== ruleId);
   });
 }
@@ -189,29 +217,6 @@ function decodeBase64Utf8(input: string): string {
   const binary = atob(input);
   const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
   return new TextDecoder().decode(bytes);
-}
-
-function sanitizeUrl(rawUrl: string): string {
-  try {
-    const url = new URL(rawUrl);
-    const safePath = url.pathname
-      .split('/')
-      .map((segment) => {
-        const decoded = (() => {
-          try {
-            return decodeURIComponent(segment);
-          } catch {
-            return segment;
-          }
-        })();
-        const digitCount = (decoded.match(/\d/g) ?? []).length;
-        return digitCount >= 8 || decoded.length > 32 ? ':redacted' : decoded;
-      })
-      .join('/');
-    return `${url.origin}${safePath}`;
-  } catch {
-    return rawUrl.split(/[?#]/, 1)[0];
-  }
 }
 
 async function findPageTarget(tabId: number): Promise<chrome.debugger.TargetInfo | undefined> {
