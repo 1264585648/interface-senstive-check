@@ -4,12 +4,30 @@ import { hasValidCnProvinceCode, isValidCnIdCard, isValidDateParts } from './val
 const MOBILE_REGEX = /(?<!\d)(?:\+?86[-\s]?)?1[3-9]\d(?:[-\s]?\d){8}(?!\d)/g;
 const ID_CARD_18_REGEX = /(?<![0-9A-Za-z])\d{17}[0-9Xx](?![0-9A-Za-z])/g;
 const ID_CARD_15_REGEX = /(?<!\d)\d{15}(?!\d)/g;
-const BIRTH_PATH_REGEX = /(birthday|birth[_-]?(?:day|date|month|ym)|date[_-]?of[_-]?birth|dob|出生日期|出生年月|生日)/i;
+const BIRTH_FIELD_NAMES = new Set([
+  'birthday',
+  'birthdate',
+  'birthmonth',
+  'birthym',
+  'dateofbirth',
+  'dob',
+  '出生日期',
+  '出生年月',
+  '生日'
+]);
 const MAX_CUSTOM_REGEX_LENGTH = 256;
 const MAX_CUSTOM_RULE_MATCHES = 200;
 
 function unique(matches: string[]): string[] {
   return [...new Set(matches)];
+}
+
+function normalizeFieldName(fieldName: string): string {
+  return fieldName.toLowerCase().replace(/[\s_-]/g, '');
+}
+
+function isBirthField(fieldName?: string): boolean {
+  return Boolean(fieldName && BIRTH_FIELD_NAMES.has(normalizeFieldName(fieldName)));
 }
 
 function isValidLegacyCnIdCard(value: string): boolean {
@@ -78,7 +96,7 @@ export const complianceRules: ComplianceRule[] = [
     description: '生日语义字段中的完整年月日',
     expression: '\\d{4}-\\d{2}-\\d{2}',
     scanRaw: false,
-    detect: (value, context) => BIRTH_PATH_REGEX.test(context.path) ? detectBirthDates(value) : []
+    detect: (value, context) => isBirthField(context.fieldName) ? detectBirthDates(value) : []
   }
 ];
 
