@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>接口敏感信息检测 - 高保真原型</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --text: #172033;
+      --muted: #667085;
+      --border: #e5e9f0;
+      --border-strong: #d9e0ea;
+      --primary: #2f6df6;
+      --primary-weak: #eef4ff;
+      --success: #12b76a;
+      --success-weak: #ecfdf3;
+      --danger: #f04438;
+      --danger-weak: #fff1f0;
+      --orange: #f79009;
+      --orange-weak: #fff7e8;
+      --shadow: 0 10px 30px rgba(16, 24, 40, .06);
+      --radius: 16px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background: radial-gradient(circle at 0 0, rgba(47,109,246,.06), transparent 28%), var(--bg);
+    }
+    button, input { font: inherit; }
+    button { cursor: pointer; }
+
+    .app-shell {
+      width: min(1480px, calc(100vw - 48px));
+      margin: 24px auto;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .topbar {
+      min-height: 92px;
+      padding: 20px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255,255,255,.96);
+    }
+    .brand { display: flex; gap: 14px; align-items: center; }
+    .brand-mark {
+      width: 46px; height: 46px; border-radius: 14px;
+      display: grid; place-items: center;
+      background: linear-gradient(145deg,#447df7,#2f6df6);
+      box-shadow: 0 8px 18px rgba(47,109,246,.22);
+    }
+    .brand-mark svg { width: 27px; height: 27px; }
+    .brand h1 { margin: 0; font-size: 22px; line-height: 1.2; letter-spacing: -.02em; }
+    .brand p { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+    .top-actions { display: flex; align-items: center; gap: 10px; }
+    .status-chip {
+      display: inline-flex; align-items: center; gap: 7px;
+      min-height: 34px; padding: 0 12px;
+      border-radius: 999px; border: 1px solid #dfe5ed;
+      background: #f8fafc; color: #475467; font-size: 13px; font-weight: 600;
+    }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #98a2b3; }
+    .status-chip.collecting { background: var(--success-weak); border-color: #c6f0d8; color: #067647; }
+    .status-chip.collecting .status-dot { background: var(--success); box-shadow: 0 0 0 4px rgba(18,183,106,.11); }
+
+    .content { display: grid; grid-template-columns: 440px minmax(0,1fr); min-height: 720px; }
+    .left-panel { border-right: 1px solid var(--border); padding: 26px; background: #fbfcfe; }
+    .right-panel { padding: 26px; min-width: 0; }
+    .section-title-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+    .section-title { margin: 0; font-size: 17px; line-height: 1.3; }
+    .section-subtitle { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+    .card {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(16,24,40,.025);
+    }
+
+    .rule-list { margin-bottom: 22px; }
+    .rule-row {
+      min-height: 92px;
+      display: grid;
+      grid-template-columns: 46px minmax(0,1fr);
+      gap: 12px;
+      align-items: center;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--border);
+      transition: background .15s ease;
+    }
+    .rule-row:last-child { border-bottom: 0; }
+    .rule-row:hover { background: #fbfdff; }
+    .rule-name { font-size: 15px; font-weight: 700; }
+    .rule-desc { margin-top: 5px; color: var(--muted); font-size: 12px; }
+    .rule-expression {
+      margin-top: 8px;
+      display: inline-block;
+      max-width: 100%;
+      color: #344054;
+      background: #f7f9fc;
+      border: 1px solid #edf0f4;
+      border-radius: 7px;
+      padding: 4px 7px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .switch { position: relative; width: 38px; height: 22px; display: inline-block; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; inset: 0; border-radius: 999px; background: #cfd6e1; transition: .2s ease; }
+    .slider::before {
+      content: ""; position: absolute; width: 18px; height: 18px;
+      left: 2px; top: 2px; border-radius: 50%; background: #fff;
+      box-shadow: 0 1px 4px rgba(16,24,40,.22); transition: .2s ease;
+    }
+    .switch input:checked + .slider { background: var(--primary); }
+    .switch input:checked + .slider::before { transform: translateX(16px); }
+
+    .control-card { padding: 18px; }
+    .control-title { font-size: 15px; font-weight: 700; margin-bottom: 12px; }
+    .control-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .btn {
+      min-height: 44px; border-radius: 10px; border: 1px solid var(--border-strong);
+      background: white; color: #344054; font-weight: 700; font-size: 14px;
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      transition: .15s ease;
+    }
+    .btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 5px 14px rgba(16,24,40,.07); }
+    .btn:disabled { opacity: .42; cursor: not-allowed; transform: none; box-shadow: none; }
+    .btn-start { color: #067647; border-color: #8fe0b4; background: #f6fff9; }
+    .btn-stop { color: #b42318; border-color: #f7aaa4; background: #fffafa; }
+    .btn svg { width: 16px; height: 16px; }
+    .privacy-note {
+      margin-top: 13px; padding: 12px 13px;
+      display: flex; align-items: flex-start; gap: 9px;
+      border: 1px solid #dbe7ff; background: #f6f9ff; border-radius: 10px;
+      color: #475467; font-size: 12px; line-height: 1.55;
+    }
+    .privacy-note svg { flex: none; width: 16px; margin-top: 1px; }
+
+    .results-head { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 14px; gap: 12px; }
+    .result-count { color: var(--muted); font-size: 13px; }
+    .result-count strong { color: var(--danger); font-size: 15px; }
+    .table-card { overflow: hidden; }
+    .result-table { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+    .result-table th {
+      background: #f8fafc; color: #475467; font-size: 12px; font-weight: 700;
+      text-align: left; padding: 13px 14px; border-bottom: 1px solid var(--border);
+    }
+    .result-table td {
+      padding: 15px 14px; border-bottom: 1px solid var(--border);
+      color: #344054; font-size: 13px; vertical-align: middle;
+    }
+    .result-table tr:last-child td { border-bottom: 0; }
+    .result-table tbody tr:hover { background: #fbfdff; }
+    .col-time { width: 100px; }
+    .col-api { width: 29%; }
+    .col-type { width: 150px; }
+    .col-value { width: 180px; }
+    .col-path { width: auto; }
+    .method { font-size: 11px; font-weight: 800; margin-right: 8px; }
+    .method.get { color: #039855; }
+    .method.post { color: #7f56d9; }
+    .api { font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size: 12px; color:#344054; }
+    .badge {
+      display: inline-flex; min-height: 26px; align-items: center; padding: 0 9px;
+      border-radius: 999px; font-size: 12px; font-weight: 700; border: 1px solid transparent;
+    }
+    .badge.phone { color: #067647; background: var(--success-weak); border-color: #c5efd7; }
+    .badge.id { color: #b42318; background: var(--danger-weak); border-color: #ffd2cf; }
+    .badge.birth { color: #b54708; background: var(--orange-weak); border-color: #fedf89; }
+    .masked { font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-weight: 700; letter-spacing: .02em; }
+    .path { font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size: 12px; color: #667085; word-break: break-all; }
+
+    .empty { display: none; min-height: 430px; place-items: center; text-align: center; color: var(--muted); }
+    .empty.visible { display: grid; }
+    .empty-icon {
+      width: 54px; height: 54px; margin: 0 auto 13px; border-radius: 15px;
+      display: grid; place-items: center; background: #f2f4f7; color: #98a2b3;
+    }
+    .empty h3 { margin: 0 0 6px; font-size: 15px; color: #344054; }
+    .empty p { margin: 0; font-size: 12px; }
+    .footer-status { margin-top: 12px; color: #98a2b3; font-size: 11px; text-align: right; }
+
+    @media (max-width: 1050px) {
+      .content { grid-template-columns: 1fr; }
+      .left-panel { border-right: 0; border-bottom: 1px solid var(--border); }
+      .result-table { min-width: 820px; }
+      .table-card { overflow-x: auto; }
+    }
+    @media (max-width: 640px) {
+      .app-shell { width: 100%; margin: 0; border-radius: 0; border-left: 0; border-right: 0; }
+      .topbar, .left-panel, .right-panel { padding-left: 16px; padding-right: 16px; }
+      .brand p { display: none; }
+      .brand h1 { font-size: 18px; }
+      .top-actions { display: none; }
+      .control-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M12 2.5 19 5v5.6c0 4.7-2.8 8.8-7 10.9-4.2-2.1-7-6.2-7-10.9V5l7-2.5Z" fill="white" opacity=".96"/><path d="m9.2 12 1.7 1.7 4-4" stroke="#2F6DF6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <div>
+          <h1>接口敏感信息检测</h1>
+          <p>采集当前页面接口响应，检查是否存在明文敏感信息</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <div class="status-chip" id="statusChip"><span class="status-dot"></span><span id="statusText">未采集</span></div>
+      </div>
+    </header>
+
+    <main class="content">
+      <aside class="left-panel">
+        <div class="section-title-row">
+          <div>
+            <h2 class="section-title">规则列表</h2>
+            <p class="section-subtitle">启用的规则会用于本次响应扫描</p>
+          </div>
+        </div>
+        <section class="card rule-list" aria-label="规则列表">
+          <div class="rule-row">
+            <label class="switch"><input type="checkbox" checked data-rule="phone"><span class="slider"></span></label>
+            <div><div class="rule-name">手机号</div><div class="rule-desc">中国大陆完整手机号</div><div class="rule-expression">1[3-9]\d{9} / +86 / 空格 / 短横线</div></div>
+          </div>
+          <div class="rule-row">
+            <label class="switch"><input type="checkbox" checked data-rule="id"><span class="slider"></span></label>
+            <div><div class="rule-name">身份证号</div><div class="rule-desc">18 位身份证校验码验证，兼容 15 位历史号码</div><div class="rule-expression">\d{17}[\dXx] + checksum</div></div>
+          </div>
+          <div class="rule-row">
+            <label class="switch"><input type="checkbox" checked data-rule="birth"><span class="slider"></span></label>
+            <div><div class="rule-name">完整出生日期</div><div class="rule-desc">仅在 birthday / birthDate / DOB 等生日字段检测</div><div class="rule-expression">YYYY-MM-DD / YYYYMMDD / 中文日期</div></div>
+          </div>
+        </section>
+
+        <section class="card control-card">
+          <div class="control-title">采集控制</div>
+          <div class="control-grid">
+            <button class="btn btn-start" id="startBtn"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.7v12.6c0 .8.9 1.3 1.6.8l9.1-6.3c.6-.4.6-1.3 0-1.7L9.6 4.9C8.9 4.4 8 4.9 8 5.7Z"/></svg>开始采集</button>
+            <button class="btn btn-stop" id="stopBtn" disabled><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.8"/></svg>结束采集</button>
+          </div>
+          <div class="privacy-note"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#2F6DF6" stroke-width="1.8"/><path d="M12 10.8v5" stroke="#2F6DF6" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="7.8" r="1" fill="#2F6DF6"/></svg><div>仅采集当前标签页的 Fetch / XHR 响应；扫描全部在本机完成，检测结果只保留脱敏信息。</div></div>
+        </section>
+      </aside>
+
+      <section class="right-panel">
+        <div class="results-head">
+          <div><h2 class="section-title">敏感信息</h2><p class="section-subtitle">按检测时间倒序展示本次采集结果</p></div>
+          <div class="result-count">共发现 <strong id="resultCount">6</strong> 条</div>
+        </div>
+        <div class="card table-card" id="tableCard">
+          <table class="result-table">
+            <thead><tr><th class="col-time">时间</th><th class="col-api">接口</th><th class="col-type">类型</th><th class="col-value">敏感信息</th><th class="col-path">位置</th></tr></thead>
+            <tbody id="resultBody">
+              <tr data-rule-row="phone"><td>14:30:25</td><td><span class="method get">GET</span><span class="api">/api/user/detail</span></td><td><span class="badge phone">手机号</span></td><td><span class="masked">138****8000</span></td><td><span class="path">$.data.user.phone</span></td></tr>
+              <tr data-rule-row="id"><td>14:30:21</td><td><span class="method post">POST</span><span class="api">/api/order/create</span></td><td><span class="badge id">身份证号</span></td><td><span class="masked">110105********002X</span></td><td><span class="path">$.data.idCard</span></td></tr>
+              <tr data-rule-row="birth"><td>14:30:18</td><td><span class="method get">GET</span><span class="api">/api/user/info</span></td><td><span class="badge birth">完整出生日期</span></td><td><span class="masked">1990-**-**</span></td><td><span class="path">$.data.birthDate</span></td></tr>
+              <tr data-rule-row="phone"><td>14:30:15</td><td><span class="method get">GET</span><span class="api">/api/customers</span></td><td><span class="badge phone">手机号</span></td><td><span class="masked">139****1234</span></td><td><span class="path">$.data.list[0].mobile</span></td></tr>
+              <tr data-rule-row="id"><td>14:30:05</td><td><span class="method get">GET</span><span class="api">/api/user/detail</span></td><td><span class="badge id">身份证号</span></td><td><span class="masked">320582********0018</span></td><td><span class="path">$.data.user.idCard</span></td></tr>
+              <tr data-rule-row="birth"><td>14:30:02</td><td><span class="method get">GET</span><span class="api">/api/order/list</span></td><td><span class="badge birth">完整出生日期</span></td><td><span class="masked">1988-**-**</span></td><td><span class="path">$.data.list[1].birth</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="empty" id="emptyState"><div><div class="empty-icon"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M7 3h7l4 4v14H7V3Z" stroke="currentColor" stroke-width="1.7"/><path d="M14 3v5h5M9.5 13h5M9.5 16.5h3.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></div><h3>暂无敏感信息</h3><p>点击“开始采集”后正常操作目标页面即可。</p></div></div>
+        <div class="footer-status" id="footerStatus">原型数据 · 尚未开始采集</div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const statusChip = document.getElementById('statusChip');
+    const statusText = document.getElementById('statusText');
+    const footerStatus = document.getElementById('footerStatus');
+    const resultBody = document.getElementById('resultBody');
+    const resultCount = document.getElementById('resultCount');
+    const tableCard = document.getElementById('tableCard');
+    const emptyState = document.getElementById('emptyState');
+
+    function refreshVisibleRows() {
+      const enabled = new Set([...document.querySelectorAll('[data-rule]')].filter(input => input.checked).map(input => input.dataset.rule));
+      let visible = 0;
+      [...resultBody.querySelectorAll('tr')].forEach(row => {
+        const show = enabled.has(row.dataset.ruleRow);
+        row.style.display = show ? '' : 'none';
+        if (show) visible++;
+      });
+      resultCount.textContent = visible;
+      tableCard.style.display = visible ? '' : 'none';
+      emptyState.classList.toggle('visible', visible === 0);
+    }
+
+    document.querySelectorAll('[data-rule]').forEach(input => input.addEventListener('change', refreshVisibleRows));
+    startBtn.addEventListener('click', () => {
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      statusChip.classList.add('collecting');
+      statusText.textContent = '采集中';
+      footerStatus.textContent = '正在采集当前标签页的 Fetch / XHR 响应';
+    });
+    stopBtn.addEventListener('click', () => {
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      statusChip.classList.remove('collecting');
+      statusText.textContent = '已结束';
+      footerStatus.textContent = '采集已结束 · 结果保留在当前页面';
+    });
+    refreshVisibleRows();
+  </script>
+</body>
+</html>
