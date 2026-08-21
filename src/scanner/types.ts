@@ -8,14 +8,15 @@ export interface Detection {
   ruleId: RuleId;
   ruleName: string;
   path: string;
-  maskedValue: string;
+  rawValue: string;
 }
 
 export interface ComplianceRule {
   id: RuleId;
   name: string;
+  description: string;
+  expression: string;
   detect(value: string, context: DetectionContext): string[];
-  mask(value: string): string;
 }
 
 export interface Finding extends Detection {
@@ -34,6 +35,7 @@ export interface ScanState {
   attached: boolean;
   pageUrl?: string;
   scannedResponses: number;
-  findings: Finding[];
   error?: string;
 }
+
+export type RuleSettings = Record<RuleId, boolean>;
