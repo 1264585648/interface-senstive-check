@@ -3,9 +3,11 @@ const UUID_LIKE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[
 const JWT_LIKE = /^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}$/;
 const CN_MOBILE_LIKE = /^(?:\+?86[-\s]?)?1[3-9]\d(?:[-\s]?\d){8}$/;
 const LONG_NUMBER = /\d{6,}/;
-const DYNAMIC_PARENT_SEGMENTS = new Set([
-  'user', 'users', 'account', 'accounts', 'member', 'members', 'customer', 'customers',
-  'profile', 'profiles', 'order', 'orders', 'device', 'devices', 'token', 'tokens', 'session', 'sessions'
+const RESOURCE_COLLECTION_SEGMENTS = new Set([
+  'users', 'accounts', 'members', 'customers', 'profiles', 'orders', 'devices', 'tokens', 'sessions'
+]);
+const SAFE_RESOURCE_ACTIONS = new Set([
+  'list', 'detail', 'info', 'search', 'create', 'update', 'delete', 'batch', 'current', 'me', 'profile'
 ]);
 
 function decodeSegment(segment: string): string {
@@ -27,7 +29,12 @@ function shouldRedactSegment(segment: string, previousSegment?: string): boolean
   const decoded = decodeSegment(segment);
   if (!decoded) return false;
 
-  if (previousSegment && DYNAMIC_PARENT_SEGMENTS.has(previousSegment.toLowerCase())) return true;
+  const normalized = decoded.toLowerCase();
+  if (
+    previousSegment
+    && RESOURCE_COLLECTION_SEGMENTS.has(previousSegment.toLowerCase())
+    && !SAFE_RESOURCE_ACTIONS.has(normalized)
+  ) return true;
   if (EMAIL_LIKE.test(decoded)) return true;
   if (UUID_LIKE.test(decoded)) return true;
   if (JWT_LIKE.test(decoded)) return true;
